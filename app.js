@@ -658,25 +658,50 @@ function loadSettings() {
     }
 }
 
-// Import/Export
-function exportToJSON() {
-    const dataStr = JSON.stringify(tasks, null, 2);
-    downloadFile(dataStr, 'tasks.json', 'application/json');
-    showToast('Tasks exported to JSON', 'success');
+// ============================================
+// IMPORT/EXPORT FUNCTIONS (Enhanced)
+// ============================================
+
+// Helper function to generate timestamped filename
+function getTimestampedFilename(baseName, extension) {
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
+    return `${baseName}_${timestamp}.${extension}`;
 }
 
+// Export to JSON with metadata and timestamp
+function exportToJSON() {
+    const exportData = {
+        exportedAt: new Date().toISOString(),
+        version: '1.0',
+        totalTasks: tasks.length,
+        tasks: tasks
+    };
+    
+    const dataStr = JSON.stringify(exportData, null, 2);
+    const filename = getTimestampedFilename('tasks', 'json');
+    downloadFile(dataStr, filename, 'application/json');
+    showToast(`Tasks exported to ${filename}`, 'success');
+}
+
+// Export to CSV with timestamp
 function exportToCSV() {
-    let csv = 'ID,Title,Description,Category,Priority,Due Date,Reminder,Repeat,Repeat Frequency,Tags,Completed,Created At\n';
+    const timestamp = new Date().toISOString();
+    let csv = `# Exported at: ${timestamp}\n`;
+    csv += 'ID,Title,Description,Category,Priority,Due Date,Reminder,Repeat,Repeat Frequency,Tags,Completed,Created At\n';
     
     tasks.forEach(task => {
         csv += `"${task.id}","${escapeCSV(task.title)}","${escapeCSV(task.description)}","${task.category}","${task.priority}","${task.dueDate || ''}","${task.reminder || ''}","${task.repeat}","${task.repeatFrequency || ''}","${task.tags.join(';')}","${task.completed}","${task.createdAt}"\n`;
     });
     
-    downloadFile(csv, 'tasks.csv', 'text/csv');
-    showToast('Tasks exported to CSV', 'success');
+    const filename = getTimestampedFilename('tasks', 'csv');
+    downloadFile(csv, filename, 'text/csv');
+    showToast(`Tasks exported to ${filename}`, 'success');
 }
 
+// Export to Excel with timestamp and metadata
 function exportToExcel() {
+    const timestamp = new Date().toISOString();
+    
     const data = tasks.map(task => ({
         'ID': task.id,
         'Title': task.title,
@@ -692,25 +717,46 @@ function exportToExcel() {
         'Created At': task.createdAt
     }));
     
-    const ws = XLSX.utils.json_to_sheet(data);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Tasks');
-    XLSX.writeFile(wb, 'tasks.xlsx');
+    // Add metadata sheet
+    const metadata = [{
+        'Property': 'Exported At',
+        'Value': timestamp
+    }, {
+        'Property': 'Total Tasks',
+        'Value': tasks.length
+    }, {
+        'Property': 'Version',
+        'Value': '1.0'
+    }];
     
-    showToast('Tasks exported to Excel', 'success');
+    const ws = XLSX.utils.json_to_sheet(data);
+    const wsMeta = XLSX.utils.json_to_sheet(metadata);
+    const wb = XLSX.utils.book_new();
+    
+    XLSX.utils.book_append_sheet(wb, ws, 'Tasks');
+    XLSX.utils.book_append_sheet(wb, wsMeta, 'Metadata');
+    
+    const filename = getTimestampedFilename('tasks', 'xlsx');
+    XLSX.writeFile(wb, filename);
+    
+    showToast(`Tasks exported to ${filename}`, 'success');
 }
 
+// Export to PDF with timestamp
 function exportToPDF() {
     const { jsPDF } = window.jspdf;
     const doc = new jsPDF();
+    
+    const exportTime = new Date().toLocaleString();
     
     doc.setFontSize(18);
     doc.text('TaskMaster Pro - Tasks Report', 14, 20);
     
     doc.setFontSize(10);
-    doc.text(`Generated on: ${new Date().toLocaleString()}`, 14, 28);
+    doc.text(`Exported on: ${exportTime}`, 14, 28);
+    doc.text(`Total Tasks: ${tasks.length}`, 14, 34);
     
-    let y = 40;
+    let y = 45;
     const lineHeight = 7;
     const pageHeight = doc.internal.pageSize.height;
     
@@ -750,12 +796,16 @@ function exportToPDF() {
         y += 3;
     });
     
-    doc.save('tasks.pdf');
-    showToast('Tasks exported to PDF', 'success');
+    const filename = getTimestampedFilename('tasks', 'pdf');
+    doc.save(filename);
+    showToast(`Tasks exported to ${filename}`, 'success');
 }
 
+// Export to Google Calendar with timestamp
 function exportToGoogleCalendar() {
     let icsContent = 'BEGIN:VCALENDAR\nVERSION:2.0\nPRODID:-//TaskMaster Pro//EN\n';
+    icsContent += `X-WR-CALNAME:TaskMaster Pro Tasks\n`;
+    icsContent += `X-PUBLISHED-TTL:PT1H\n`;
     
     tasks.forEach(task => {
         if (task.dueDate) {
@@ -778,10 +828,35 @@ function exportToGoogleCalendar() {
     
     icsContent += 'END:VCALENDAR';
     
-    downloadFile(icsContent, 'tasks.ics', 'text/calendar');
-    showToast('Calendar file created. Import it into Google Calendar.', 'success');
+    const filename = getTimestampedFilename('tasks', 'ics');
+    downloadFile(icsContent, filename, 'text/calendar');
+    showToast(`Calendar file created: ${filename}`, 'success');
 }
 
+// Enhanced duplicate detection
+function isDuplicate(newTask, existingTask) {
+    // Check by ID first (most reliable)
+    if (newTask.id === existingTask.id) {
+        return true;
+    }
+    
+    // Check by title and created date (strong match)
+    if (newTask.title === existingTask.title && 
+        newTask.createdAt === existingTask.createdAt) {
+        return true;
+    }
+    
+    // Check by title, category, and due date (likely duplicate)
+    if (newTask.title.toLowerCase().trim() === existingTask.title.toLowerCase().trim() &&
+        newTask.category === existingTask.category &&
+        newTask.dueDate === existingTask.dueDate) {
+        return true;
+    }
+    
+    return false;
+}
+
+// Enhanced import function with smart duplicate detection
 function importFile(event) {
     const file = event.target.files[0];
     if (!file) return;
@@ -791,62 +866,142 @@ function importFile(event) {
     reader.onload = function(e) {
         try {
             const content = e.target.result;
+            let importedData = null;
             let importedTasks = [];
             
+            // Parse different file formats
             if (file.name.endsWith('.json')) {
-                importedTasks = JSON.parse(content);
+                importedData = JSON.parse(content);
+                
+                // Check if it's our enhanced export format with metadata
+                if (importedData.tasks && Array.isArray(importedData.tasks)) {
+                    importedTasks = importedData.tasks;
+                    console.log(`Importing from export dated: ${importedData.exportedAt}`);
+                } else if (Array.isArray(importedData)) {
+                    importedTasks = importedData;
+                } else {
+                    throw new Error('Invalid JSON format');
+                }
+                
             } else if (file.name.endsWith('.csv')) {
                 importedTasks = parseCSV(content);
+                
             } else if (file.name.endsWith('.xlsx')) {
                 const workbook = XLSX.read(content, { type: 'binary' });
-                const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
-                importedTasks = XLSX.utils.sheet_to_json(firstSheet);
-                importedTasks = importedTasks.map(row => ({
-                    id: Date.now().toString() + Math.random(),
+                
+                // Try to read from Tasks sheet first, fallback to first sheet
+                let sheetName = 'Tasks';
+                if (!workbook.Sheets[sheetName]) {
+                    sheetName = workbook.SheetNames[0];
+                }
+                
+                const sheet = workbook.Sheets[sheetName];
+                const rawData = XLSX.utils.sheet_to_json(sheet);
+                
+                importedTasks = rawData.map(row => ({
+                    id: row.ID || (Date.now().toString() + Math.random().toString(36).substr(2, 9)),
                     title: row.Title || '',
                     description: row.Description || '',
                     category: row.Category || 'personal',
                     priority: row.Priority || 'medium',
                     dueDate: row['Due Date'] || null,
                     reminder: row.Reminder || null,
-                    repeat: row.Repeat === 'Yes',
+                    repeat: row.Repeat === 'Yes' || row.Repeat === true,
                     repeatFrequency: row['Repeat Frequency'] || null,
-                    tags: row.Tags ? row.Tags.split(',').map(t => t.trim()) : [],
-                    completed: row.Completed === 'Yes',
+                    tags: row.Tags ? row.Tags.split(',').map(t => t.trim()).filter(t => t) : [],
+                    completed: row.Completed === 'Yes' || row.Completed === true,
                     createdAt: row['Created At'] || new Date().toISOString()
                 }));
+            } else {
+                throw new Error('Unsupported file format. Please use JSON, CSV, or XLSX files.');
             }
             
-            if (Array.isArray(importedTasks) && importedTasks.length > 0) {
-                // Merge with existing tasks (avoid duplicates by title)
-                const existingTitles = new Set(tasks.map(t => t.title));
-                const newTasks = importedTasks.filter(t => !existingTitles.has(t.title));
+            // Validate imported tasks
+            if (!Array.isArray(importedTasks) || importedTasks.length === 0) {
+                showToast('No valid tasks found in file', 'error');
+                return;
+            }
+            
+            // Smart duplicate detection and incremental import
+            let newCount = 0;
+            let duplicateCount = 0;
+            let skippedCount = 0;
+            
+            importedTasks.forEach(importedTask => {
+                // Ensure task has required fields
+                if (!importedTask.title || importedTask.title.trim() === '') {
+                    skippedCount++;
+                    return; // Skip invalid tasks
+                }
                 
-                tasks.push(...newTasks);
+                // Check for duplicates
+                let isDup = false;
+                
+                for (let i = 0; i < tasks.length; i++) {
+                    if (isDuplicate(importedTask, tasks[i])) {
+                        isDup = true;
+                        break;
+                    }
+                }
+                
+                if (isDup) {
+                    duplicateCount++;
+                } else {
+                    // Ensure unique ID
+                    if (!importedTask.id || tasks.some(t => t.id === importedTask.id)) {
+                        importedTask.id = Date.now().toString() + Math.random().toString(36).substr(2, 9);
+                    }
+                    
+                    // Add new task
+                    tasks.push(importedTask);
+                    newCount++;
+                }
+            });
+            
+            // Save and refresh if there are new tasks
+            if (newCount > 0) {
                 saveTasks();
                 renderTasks();
-                showToast(`Imported ${newTasks.length} tasks successfully`, 'success');
-            } else {
-                showToast('No valid tasks found in file', 'error');
             }
+            
+            // Show detailed import results
+            let message = '';
+            if (newCount > 0) message += `✓ ${newCount} new task(s) imported. `;
+            if (duplicateCount > 0) message += `⊗ ${duplicateCount} duplicate(s) skipped. `;
+            if (skippedCount > 0) message += `⚠ ${skippedCount} invalid task(s) skipped. `;
+            
+            if (newCount === 0) {
+                showToast(message || 'No new tasks to import', 'info');
+            } else {
+                showToast(message.trim(), 'success');
+            }
+            
         } catch (error) {
             console.error('Import error:', error);
-            showToast('Error importing file', 'error');
+            showToast(`Error importing file: ${error.message}`, 'error');
         }
     };
     
+    // Read file based on type
     if (file.name.endsWith('.xlsx')) {
         reader.readAsBinaryString(file);
     } else {
         reader.readAsText(file);
     }
     
-    // Reset input
+    // Reset file input
     event.target.value = '';
 }
 
+// Enhanced CSV parser
 function parseCSV(content) {
-    const lines = content.split('\n');
+    // Remove comment lines (starting with #)
+    const lines = content.split('\n').filter(line => line.trim() && !line.trim().startsWith('#'));
+    
+    if (lines.length < 2) {
+        return [];
+    }
+    
     const headers = lines[0].split(',').map(h => h.trim().replace(/"/g, ''));
     const tasks = [];
     
@@ -857,11 +1012,11 @@ function parseCSV(content) {
         const task = {};
         
         headers.forEach((header, index) => {
-            const value = values[index] ? values[index].replace(/"/g, '').trim() : '';
+            const value = values[index] ? values[index].replace(/^"|"$/g, '').trim() : '';
             
             switch (header) {
                 case 'ID':
-                    task.id = value || Date.now().toString();
+                    task.id = value || (Date.now().toString() + Math.random().toString(36).substr(2, 9));
                     break;
                 case 'Title':
                     task.title = value;
@@ -888,7 +1043,7 @@ function parseCSV(content) {
                     task.repeatFrequency = value || null;
                     break;
                 case 'Tags':
-                    task.tags = value ? value.split(';').map(t => t.trim()) : [];
+                    task.tags = value ? value.split(';').map(t => t.trim()).filter(t => t) : [];
                     break;
                 case 'Completed':
                     task.completed = value === 'true' || value === 'Yes';
@@ -907,7 +1062,10 @@ function parseCSV(content) {
     return tasks;
 }
 
-// Storage
+// ============================================
+// STORAGE FUNCTIONS
+// ============================================
+
 function saveTasks() {
     localStorage.setItem('taskmaster_tasks', JSON.stringify(tasks));
 }
@@ -920,7 +1078,10 @@ function loadTasks() {
     }
 }
 
-// Utility Functions
+// ============================================
+// UTILITY FUNCTIONS
+// ============================================
+
 function showToast(message, type = 'success') {
     const toast = document.getElementById('toast');
     toast.textContent = message;
@@ -937,7 +1098,9 @@ function downloadFile(content, fileName, mimeType) {
     const link = document.createElement('a');
     link.href = url;
     link.download = fileName;
+    document.body.appendChild(link);
     link.click();
+    document.body.removeChild(link);
     URL.revokeObjectURL(url);
 }
 
@@ -949,19 +1112,22 @@ function escapeHtml(text) {
 
 function escapeCSV(text) {
     if (!text) return '';
-    return text.replace(/"/g, '""');
+    return String(text).replace(/"/g, '""');
 }
 
 function escapeICS(text) {
     if (!text) return '';
-    return text.replace(/\n/g, '\\n').replace(/,/g, '\\,').replace(/;/g, '\\;');
+    return String(text).replace(/\n/g, '\\n').replace(/,/g, '\\,').replace(/;/g, '\\;');
 }
 
 function capitalize(text) {
+    if (!text) return '';
     return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
 function formatDate(dateString) {
+    if (!dateString) return '';
+    
     const date = new Date(dateString);
     const now = new Date();
     const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
@@ -985,7 +1151,10 @@ function getPriorityNumber(priority) {
     return map[priority] || 5;
 }
 
-// Information Pages
+// ============================================
+// INFORMATION PAGES
+// ============================================
+
 function showAbout() {
     alert('TaskMaster Pro v1.0\n\nA comprehensive task management application with AI-powered insights.\n\nDeveloped by Santosh Phuyal');
 }
@@ -997,6 +1166,10 @@ function showHelp() {
 function showPrivacy() {
     alert('Privacy Policy:\n\nAll your data is stored locally on your device. No data is sent to external servers. Your tasks and settings remain private and under your control.');
 }
+
+// ============================================
+// INITIALIZATION
+// ============================================
 
 // Request notification permission on load
 if ('Notification' in window && Notification.permission === 'default') {
