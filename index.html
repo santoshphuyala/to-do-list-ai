@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#6366f1">
+    <meta name="description" content="Advanced To-Do List with AI Insights">
+    <title>TaskMaster Pro - Advanced To-Do List</title>
+    <link rel="manifest" href="manifest.json">
+    <link rel="icon" type="image/png" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>✓</text></svg>">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <!-- PIN Lock Screen -->
+    <div id="pinLockScreen" class="pin-lock-screen hidden">
+        <div class="pin-container">
+            <i class="fas fa-lock pin-icon"></i>
+            <h2>Enter PIN</h2>
+            <input type="password" id="pinInput" maxlength="6" placeholder="Enter your PIN">
+            <button onclick="verifyPin()" class="btn btn-primary">Unlock</button>
+            <p class="pin-error hidden" id="pinError">Incorrect PIN</p>
+        </div>
+    </div>
+
+    <!-- Main App -->
+    <div id="mainApp">
+        <!-- Header -->
+        <header class="header">
+            <div class="container">
+                <div class="header-content">
+                    <h1><i class="fas fa-check-circle"></i> TaskMaster Pro</h1>
+                    <div class="header-actions">
+                        <button class="icon-btn" onclick="toggleDarkMode()" title="Toggle Dark Mode">
+                            <i class="fas fa-moon" id="themeIcon"></i>
+                        </button>
+                        <button class="icon-btn" onclick="showInsights()" title="AI Insights">
+                            <i class="fas fa-chart-line"></i>
+                        </button>
+                        <button class="icon-btn" onclick="openSettings()" title="Settings">
+                            <i class="fas fa-cog"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </header>
+
+        <!-- Quick Add Task -->
+        <section class="quick-add">
+            <div class="container">
+                <div class="quick-add-form">
+                    <input type="text" id="quickTaskInput" placeholder="Quick add task (press Enter)..." class="quick-input">
+                    <button onclick="quickAddTask()" class="btn btn-primary">
+                        <i class="fas fa-plus"></i>
+                    </button>
+                    <button onclick="openAdvancedForm()" class="btn btn-secondary">
+                        <i class="fas fa-sliders-h"></i>
+                    </button>
+                </div>
+            </div>
+        </section>
+
+        <!-- Filter Tabs -->
+        <section class="filter-section">
+            <div class="container">
+                <div class="tabs">
+                    <button class="tab active" onclick="filterTasks('all')">All</button>
+                    <button class="tab" onclick="filterTasks('personal')">Personal</button>
+                    <button class="tab" onclick="filterTasks('office')">Office</button>
+                    <button class="tab" onclick="filterTasks('misc')">Misc</button>
+                    <button class="tab" onclick="filterTasks('completed')">Completed</button>
+                </div>
+            </div>
+        </section>
+
+        <!-- Tasks Container -->
+        <section class="tasks-section">
+            <div class="container">
+                <div id="tasksContainer" class="tasks-container">
+                    <!-- Tasks will be rendered here -->
+                </div>
+            </div>
+        </section>
+
+        <!-- Advanced Task Form Modal -->
+        <div id="taskModal" class="modal hidden">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2 id="modalTitle">Add New Task</h2>
+                    <button class="close-btn" onclick="closeTaskModal()">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+                <form id="taskForm" onsubmit="saveTask(event)">
+                    <input type="hidden" id="taskId">
+                    
+                    <div class="form-group">
+                        <label>Task Title *</label>
+                        <input type="text" id="taskTitle" required class="form-control">
+                    </div>
+
+                    <div class="form-group">
+                        <label>Description</label>
+                        <textarea id="taskDescription" rows="3" class="form-control"></textarea>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Category *</label>
+                            <select id="taskCategory" required class="form-control">
+                                <option value="personal">Personal</option>
+                                <option value="office">Office</option>
+                                <option value="misc">Misc Work</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group">
+                            <label>Priority *</label>
+                            <select id="taskPriority" required class="form-control">
+                                <option value="low">Low</option>
+                                <option value="medium">Medium</option>
+                                <option value="high">High</option>
+                                <option value="urgent">Urgent</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Due Date</label>
+                            <input type="datetime-local" id="taskDueDate" class="form-control">
+                        </div>
+
+                        <div class="form-group">
+                            <label>Reminder</label>
+                            <input type="datetime-local" id="taskReminder" class="form-control">
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label>
+                            <input type="checkbox" id="taskRepeat" onchange="toggleRepeatOptions()">
+                            Repetitive Task
+                        </label>
+                        <div id="repeatOptions" class="repeat-options hidden">
+                            <select id="repeatFrequency" class="form-control">
+                                <option value="daily">Daily</option>
+                                <option value="weekly">Weekly</option>
+                                <option value="monthly">Monthly</option>
+                                <option value="yearly">Yearly</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Tags (comma separated)</label>
+                        <input type="text" id="taskTags" placeholder="work, urgent, meeting" class="form-control">
+                    </div>
+
+                    <div class="form-actions">
+                        <button type="button" class="btn btn-secondary" onclick="closeTaskModal()">Cancel</button>
+                        <button type="submit" class="btn btn-primary">Save Task</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- Insights Modal -->
+        <div id="insightsModal" class="modal hidden">
+            <div class="modal-content modal-large">
+                <div class="modal-header">
+                    <h2><i class="fas fa-brain"></i> AI-Powered Insights</h2>
+                    <button class="close-btn" onclick="closeInsightsModal()">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+                <div id="insightsContent" class="insights-content">
+                    <!-- Insights will be rendered here -->
+                </div>
+            </div>
+        </div>
+
+        <!-- Settings Modal -->
+        <div id="settingsModal" class="modal hidden">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2><i class="fas fa-cog"></i> Settings</h2>
+                    <button class="close-btn" onclick="closeSettingsModal()">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+                <div class="settings-content">
+                    <h3>Default Options</h3>
+                    
+                    <div class="form-group">
+                        <label>Default Category</label>
+                        <select id="defaultCategory" class="form-control">
+                            <option value="personal">Personal</option>
+                            <option value="office">Office</option>
+                            <option value="misc">Misc Work</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Default Priority</label>
+                        <select id="defaultPriority" class="form-control">
+                            <option value="low">Low</option>
+                            <option value="medium">Medium</option>
+                            <option value="high">High</option>
+                            <option value="urgent">Urgent</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Default Reminder (hours before due)</label>
+                        <input type="number" id="defaultReminderHours" min="0" value="2" class="form-control">
+                    </div>
+
+                    <h3>Security</h3>
+                    
+                    <div class="form-group">
+                        <label>
+                            <input type="checkbox" id="enablePin" onchange="togglePinSetting()">
+                            Enable PIN Protection
+                        </label>
+                        <div id="pinSettings" class="pin-settings hidden">
+                            <input type="password" id="newPin" maxlength="6" placeholder="Enter 6-digit PIN" class="form-control">
+                            <input type="password" id="confirmPin" maxlength="6" placeholder="Confirm PIN" class="form-control">
+                            <button onclick="savePinSettings()" class="btn btn-primary">Save PIN</button>
+                        </div>
+                    </div>
+
+                    <h3>Import / Export</h3>
+                    
+                    <div class="import-export-section">
+                        <button onclick="exportToJSON()" class="btn btn-secondary">
+                            <i class="fas fa-download"></i> Export to JSON
+                        </button>
+                        <button onclick="exportToCSV()" class="btn btn-secondary">
+                            <i class="fas fa-file-csv"></i> Export to CSV
+                        </button>
+                        <button onclick="exportToExcel()" class="btn btn-secondary">
+                            <i class="fas fa-file-excel"></i> Export to Excel
+                        </button>
+                        <button onclick="exportToPDF()" class="btn btn-secondary">
+                            <i class="fas fa-file-pdf"></i> Export to PDF
+                        </button>
+                        <button onclick="exportToGoogleCalendar()" class="btn btn-secondary">
+                            <i class="fab fa-google"></i> Export to Google Calendar
+                        </button>
+                        
+                        <div class="import-section">
+                            <label for="importFile" class="btn btn-primary">
+                                <i class="fas fa-upload"></i> Import File
+                            </label>
+                            <input type="file" id="importFile" accept=".json,.csv,.xlsx" onchange="importFile(event)" style="display: none;">
+                        </div>
+                    </div>
+
+                    <div class="form-actions">
+                        <button class="btn btn-primary" onclick="saveSettings()">Save Settings</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Footer -->
+        <footer class="footer">
+            <div class="container">
+                <p>Developed with ❤️ by <strong>Santosh Phuyal</strong></p>
+                <p class="footer-links">
+                    <a href="#" onclick="showAbout()">About</a> •
+                    <a href="#" onclick="showHelp()">Help</a> •
+                    <a href="#" onclick="showPrivacy()">Privacy</a>
+                </p>
+            </div>
+        </footer>
+    </div>
+
+    <!-- Toast Notification -->
+    <div id="toast" class="toast hidden"></div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="app.js"></script>
+    <script>
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('service-worker.js')
+                .then(reg => console.log('Service Worker registered'))
+                .catch(err => console.log('Service Worker registration failed'));
+        }
+    </script>
+</body>
+</html>
