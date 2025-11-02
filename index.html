@@ -13,7 +13,6 @@
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-    <!-- PIN Lock Screen -->
     <div id="pinLockScreen" class="pin-lock-screen hidden">
         <div class="pin-container">
             <i class="fas fa-lock pin-icon"></i>
@@ -24,9 +23,7 @@
         </div>
     </div>
 
-    <!-- Main App -->
     <div id="mainApp">
-        <!-- Header -->
         <header class="header">
             <div class="container">
                 <div class="header-content">
@@ -46,7 +43,6 @@
             </div>
         </header>
 
-        <!-- NEW: AI Summary Section -->
         <section id="aiSummarySection" class="ai-summary-section">
             <div class="container">
                 <div class="ai-summary-header">
@@ -56,12 +52,10 @@
                     </button>
                 </div>
                 <div id="aiSummaryContent" class="ai-summary-content hidden">
-                    <!-- AI summary insights will be rendered here by app.js -->
-                </div>
+                    </div>
             </div>
         </section>
 
-        <!-- Quick Add Task -->
         <section class="quick-add">
             <div class="container">
                 <div class="quick-add-form">
@@ -76,7 +70,6 @@
             </div>
         </section>
 
-        <!-- Filter Tabs (UPDATED) -->
         <section class="filter-section">
             <div class="container">
                 <div class="tabs">
@@ -90,16 +83,34 @@
             </div>
         </section>
 
-        <!-- Tasks Container -->
         <section class="tasks-section">
             <div class="container">
-                <div id="tasksContainer" class="tasks-container">
-                    <!-- Tasks will be rendered here -->
+
+                <div id="bulkActionsContainer" class="bulk-actions-bar hidden">
+                    <div class="select-all-container">
+                        <input type="checkbox" id="selectAllCheckbox" onchange="toggleSelectAll(event)">
+                        <label for="selectAllCheckbox">Select All</label>
+                    </div>
+                    <div class="sort-container">
+                        <label for="sortSelect">Sort By:</label>
+                        <select id="sortSelect" class="form-control">
+                            <option value="priority">Priority</option>
+                            <option value="dueDate">Due Date</option>
+                            <option value="title">Title (A-Z)</option>
+                            <option value="creationDate">Creation Date</option>
+                        </select>
+                    </div>
+                    <button id="deleteSelectedBtn" class="btn btn-danger" onclick="deleteSelectedTasks()" disabled>
+                        Delete Selected (0)
+                    </button>
                 </div>
+
+                <div id="tasksContainer" class="tasks-container">
+                </div>
+
             </div>
         </section>
 
-        <!-- Advanced Task Form Modal -->
         <div id="taskModal" class="modal hidden">
             <div class="modal-content">
                 <div class="modal-header">
@@ -182,7 +193,6 @@
             </div>
         </div>
 
-        <!-- Insights Modal (Full Report) -->
         <div id="insightsModal" class="modal hidden">
             <div class="modal-content modal-large">
                 <div class="modal-header">
@@ -192,12 +202,10 @@
                     </button>
                 </div>
                 <div id="insightsContent" class="insights-content">
-                    <!-- Insights will be rendered here -->
-                </div>
+                    </div>
             </div>
         </div>
 
-        <!-- Settings Modal -->
         <div id="settingsModal" class="modal hidden">
             <div class="modal-content">
                 <div class="modal-header">
@@ -214,7 +222,7 @@
                         <select id="defaultCategory" class="form-control">
                             <option value="personal">Personal</option>
                             <option value="office">Office</option>
-                            <option value="misc">Misc Work</option>
+                            <option value-="misc">Misc Work</option>
                         </select>
                     </div>
 
@@ -246,6 +254,18 @@
                             <button onclick="savePinSettings()" class="btn btn-primary">Save PIN</button>
                         </div>
                     </div>
+
+                    <h3>Data Management</h3>
+                    <div class="form-group">
+                        <label>Danger Zone</label>
+                        <button onclick="clearAllTasks()" class="btn btn-danger">
+                            <i class="fas fa-exclamation-triangle"></i> Clear All Tasks
+                        </button>
+                        <p style="font-size: 0.875rem; color: var(--text-secondary); margin-top: 0.5rem;">
+                            This will permanently delete all tasks and cannot be undone.
+                        </p>
+                    </div>
+
 
                     <h3>Import / Export</h3>
                     
@@ -281,7 +301,6 @@
             </div>
         </div>
 
-        <!-- Footer -->
         <footer class="footer">
             <div class="container">
                 <p>Developed with ❤️ by <strong>Santosh Phuyal</strong></p>
@@ -294,7 +313,6 @@
         </footer>
     </div>
 
-    <!-- Toast Notification -->
     <div id="toast" class="toast hidden"></div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>

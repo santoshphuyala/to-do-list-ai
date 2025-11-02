@@ -2,6 +2,8 @@
 let tasks = [];
 let currentFilter = 'all';
 let currentEditingTask = null;
+let selectedTasks = new Set(); // To track tasks for bulk actions
+let currentSort = 'priority'; // Default sorting option
 let settings = {
     defaultCategory: 'personal',
     defaultPriority: 'medium',
@@ -19,7 +21,7 @@ document.addEventListener('DOMContentLoaded', function() {
     checkPinProtection();
     setupEventListeners();
     checkReminders();
-    renderAISummary(); // Render AI summary on load
+    renderAISummary(); 
     
     // Check reminders every minute
     setInterval(checkReminders, 60000);
@@ -39,11 +41,13 @@ function setupEventListeners() {
         }
     });
 
-    // Add listener for new AI summary toggle
     document.querySelector('.ai-summary-header').addEventListener('click', toggleAISummary);
+    
+    // Listener for the sort dropdown
+    document.getElementById('sortSelect').addEventListener('change', (e) => setSortOption(e.target.value));
 }
 
-// PIN Protection
+// PIN Protection (Logic remains the same)
 function checkPinProtection() {
     if (settings.pinEnabled && settings.pin) {
         document.getElementById('pinLockScreen').classList.remove('hidden');
@@ -101,7 +105,7 @@ function savePinSettings() {
     document.getElementById('confirmPin').value = '';
 }
 
-// Theme Toggle
+// Theme Toggle (Logic remains the same)
 function toggleDarkMode() {
     settings.theme = settings.theme === 'light' ? 'dark' : 'light';
     applyTheme();
@@ -139,7 +143,7 @@ function quickAddTask() {
     tasks.push(task);
     saveTasks();
     renderTasks();
-    renderAISummary(); // Update AI summary
+    renderAISummary(); 
     input.value = '';
     showToast('Task added successfully', 'success');
 }
@@ -187,6 +191,11 @@ function saveTask(event) {
         .map(tag => tag.trim())
         .filter(tag => tag);
     
+    if (!title) {
+        showToast('Task title is required', 'error');
+        return;
+    }
+
     if (taskId) {
         // Edit existing task
         const task = tasks.find(t => t.id === taskId);
@@ -224,7 +233,7 @@ function saveTask(event) {
     
     saveTasks();
     renderTasks();
-    renderAISummary(); // Update AI summary
+    renderAISummary(); 
     closeTaskModal();
 }
 
@@ -256,64 +265,177 @@ function deleteTask(taskId) {
     // Prevent deletion of a completed recurring task if its next instance exists
     const nextInstance = tasks.find(t => t.previousInstanceId === taskId);
     if (nextInstance) {
-        showToast('Cannot delete completed recurring task. Delete the pending instance first.', 'error');
+        showInfoModal('Deletion Blocked', 'Cannot delete this completed recurring task because its next instance has already been created. Please delete the pending instance first.');
         return;
     }
 
-    if (!confirm('Are you sure you want to delete this task?')) return;
-    
-    tasks = tasks.filter(t => t.id !== taskId);
-    saveTasks();
-    renderTasks();
-    renderAISummary(); // Update AI summary
-    showToast('Task deleted successfully', 'success');
+    // Use custom modal instead of confirm()
+    showConfirmModal('Confirm Deletion', 'Are you sure you want to delete this task?', () => {
+        tasks = tasks.filter(t => t.id !== taskId);
+        saveTasks();
+        // Clear selection if the deleted task was selected
+        selectedTasks.delete(taskId); 
+        renderTasks();
+        renderAISummary(); 
+        showToast('Task deleted successfully', 'success');
+    });
 }
 
-// *** MODIFIED FUNCTION ***
-// This function now handles un-checking recurring tasks intelligently
+// Bulk Actions
+function toggleTaskSelection(taskId, isChecked) {
+    if (isChecked) {
+        selectedTasks.add(taskId);
+    } else {
+        selectedTasks.delete(taskId);
+    }
+    
+    // *** FIX: Update the visibility and count of bulk action buttons ***
+    updateBulkActionUI();
+}
+
+function toggleSelectAll(event) {
+    const isChecked = event.target.checked;
+    const taskCheckboxes = document.querySelectorAll('.task-checkbox-multi');
+    
+    // Get currently rendered (filtered) task IDs
+    const currentTaskIds = Array.from(taskCheckboxes).map(cb => cb.value);
+
+    taskCheckboxes.forEach(checkbox => {
+        const taskId = checkbox.value;
+        if (isChecked) {
+            if (!checkbox.checked) {
+                checkbox.checked = true;
+                selectedTasks.add(taskId);
+            }
+        } else {
+             if (checkbox.checked) {
+                checkbox.checked = false;
+                selectedTasks.delete(taskId);
+            }
+        }
+    });
+
+    // Handle the case where the global Set might contain IDs from other filters.
+    // Ensure only the currently visible IDs are manipulated for 'Select All'.
+    if (!isChecked) {
+        // If unchecking all, remove only the currently visible tasks from the global set
+        currentTaskIds.forEach(id => selectedTasks.delete(id));
+    }
+    
+    updateBulkActionUI();
+}
+
+function deleteSelectedTasks() {
+     if (selectedTasks.size === 0) {
+        showToast('No tasks selected for deletion.', 'info');
+        return;
+    }
+
+    showConfirmModal('Confirm Bulk Deletion', `Are you sure you want to delete ${selectedTasks.size} selected task(s)?`, () => {
+        // Filter out all tasks whose IDs are in the selectedTasks set
+        const tasksToDelete = Array.from(selectedTasks);
+        let nextInstanceCount = 0;
+        
+        // Prevent deletion of completed recurring tasks if next instance exists
+        const tasksToKeep = tasksToDelete.filter(id => {
+            const isCompletedRecurring = tasks.find(t => t.id === id && t.completed && t.repeat);
+            const nextInstance = tasks.find(t => t.previousInstanceId === id);
+            if (isCompletedRecurring && nextInstance) {
+                nextInstanceCount++;
+                return true; // Keep this ID in the tasksToDelete array (effectively preventing deletion)
+            }
+            return false; // Allow deletion
+        });
+        
+        if (nextInstanceCount > 0) {
+             showInfoModal('Deletion Blocked', `Cannot delete ${nextInstanceCount} completed recurring task(s) because their next instance(s) are still pending. Please delete the pending instance(s) first.`);
+             // Only delete tasks that did NOT block the operation
+             const deletableTaskIds = tasksToDelete.filter(id => !tasksToKeep.includes(id));
+             tasks = tasks.filter(t => !deletableTaskIds.includes(t.id));
+             selectedTasks = new Set();
+             saveTasks();
+             renderTasks();
+             return;
+        }
+
+        // Proceed with full deletion if no blocking tasks
+        tasks = tasks.filter(t => !selectedTasks.has(t.id));
+        selectedTasks = new Set(); // Clear the selection
+        saveTasks();
+        renderTasks();
+        renderAISummary();
+        showToast('Selected tasks deleted successfully', 'success');
+    });
+}
+
+// NEW: Clear All functionality (Already implemented in your JS)
+function clearAllTasks() {
+    showConfirmModal('Confirm Clear All', 'Are you sure you want to delete ALL tasks permanently? This cannot be undone.', () => {
+        tasks = [];
+        selectedTasks = new Set();
+        saveTasks();
+        renderTasks();
+        renderAISummary();
+        closeSettingsModal();
+        showToast('All tasks cleared successfully', 'success');
+    });
+}
+
+function updateBulkActionUI() {
+    const count = selectedTasks.size;
+    const btn = document.getElementById('deleteSelectedBtn');
+    
+    if (btn) {
+        btn.textContent = `Delete Selected (${count})`;
+        btn.disabled = count === 0;
+    }
+    
+    // Check if the "Select All" checkbox should be indeterminate/checked
+    const visibleTasksCount = document.querySelectorAll('.task-checkbox-multi').length;
+    const selectAllCheckbox = document.getElementById('selectAllCheckbox');
+    
+    if (selectAllCheckbox) {
+         if (visibleTasksCount > 0 && count === visibleTasksCount) {
+            selectAllCheckbox.checked = true;
+            selectAllCheckbox.indeterminate = false;
+        } else if (count > 0 && count < visibleTasksCount) {
+            selectAllCheckbox.checked = false;
+            selectAllCheckbox.indeterminate = true;
+        } else {
+            selectAllCheckbox.checked = false;
+            selectAllCheckbox.indeterminate = false;
+        }
+    }
+}
+
 function toggleTask(taskId) {
     const task = tasks.find(t => t.id === taskId);
     if (!task) return;
 
-    const isCompleting = !task.completed; // Is the action to *complete* the task?
+    const isCompleting = !task.completed;
 
     if (isCompleting) {
-        // === MARKING AS COMPLETE ===
         task.completed = true;
         task.completedAt = new Date().toISOString();
         
-        // Handle repetitive tasks: Create the next instance
         if (task.repeat) {
-            const newTask = { ...task }; // Clone the task
-            newTask.id = Date.now().toString(); // New ID
+            const newTask = { ...task };
+            newTask.id = Date.now().toString();
             newTask.completed = false;
             newTask.completedAt = null;
             newTask.createdAt = new Date().toISOString();
-            // *** THIS IS THE CRITICAL ADDITION ***
-            // Link this new task to the one just-completed
             newTask.previousInstanceId = task.id; 
 
-            // Calculate next due date
             if (task.dueDate) {
                 const nextDate = new Date(task.dueDate);
                 switch (task.repeatFrequency) {
-                    case 'daily':
-                        nextDate.setDate(nextDate.getDate() + 1);
-                        break;
-                    case 'weekly':
-                        nextDate.setDate(nextDate.getDate() + 7);
-                        break;
-                    case 'monthly':
-                        nextDate.setMonth(nextDate.getMonth() + 1);
-                        break;
-                    case 'yearly':
-                        nextDate.setFullYear(nextDate.getFullYear() + 1);
-                        break;
+                    case 'daily': nextDate.setDate(nextDate.getDate() + 1); break;
+                    case 'weekly': nextDate.setDate(nextDate.getDate() + 7); break;
+                    case 'monthly': nextDate.setMonth(nextDate.getMonth() + 1); break;
+                    case 'yearly': nextDate.setFullYear(nextDate.getFullYear() + 1); break;
                 }
-                // Format to 'YYYY-MM-DDTHH:MM'
                 newTask.dueDate = new Date(nextDate.getTime() - (nextDate.getTimezoneOffset() * 60000)).toISOString().slice(0, 16);
                 
-                // Update reminder based on new due date
                 if (task.reminder) {
                     const originalDueDate = new Date(task.dueDate);
                     const originalReminderDate = new Date(task.reminder);
@@ -328,17 +450,13 @@ function toggleTask(taskId) {
             showToast(`Next recurring task created for '${task.title}'`, 'success');
         }
     } else {
-        // === MARKING AS PENDING (UN-CHECKING) ===
         task.completed = false;
         task.completedAt = null;
 
-        // If it was a recurring task, find and remove the *next* instance that was created.
         if (task.repeat) {
-            // Find the task that was generated by *this* task's completion
             const nextInstanceIndex = tasks.findIndex(t => t.previousInstanceId === task.id);
             
             if (nextInstanceIndex > -1) {
-                // Remove it from the array
                 tasks.splice(nextInstanceIndex, 1);
                 showToast('Next recurring instance removed.', 'info');
             }
@@ -346,79 +464,97 @@ function toggleTask(taskId) {
     }
     
     saveTasks();
-    // Re-render tasks, which will move the task from 'Completed' back to its correct pending tab
     renderTasks();
-    renderAISummary(); // Update AI summary
+    renderAISummary(); 
 }
 
-
+// Update Filter Logic
 function filterTasks(filter) {
     currentFilter = filter;
+    
+    // Clear selection state when switching tabs to avoid confusion
+    selectedTasks.clear();
+    // updateBulkActionUI(); // renderTasks() will call this
     
     // Update active tab
     const tabs = document.querySelectorAll('.tab');
     tabs.forEach(tab => tab.classList.remove('active'));
-    // Use event.target if available, otherwise find by filter
-    if (event && event.target) {
-         event.target.classList.add('active');
-    } else {
-        // Fallback for when filter is called without an event (e.g. on load)
-        const tabToActive = [...tabs].find(tab => tab.onclick.toString().includes(`'${filter}'`));
-        if (tabToActive) {
-            tabToActive.classList.add('active');
-        }
+    
+    const tabToActive = [...tabs].find(tab => tab.onclick.toString().includes(`'${filter}'`));
+    if (tabToActive) {
+        tabToActive.classList.add('active');
     }
    
-    
     renderTasks();
 }
 
-// UPDATED renderTasks function for new tabs
+// NEW: Sort Logic (Already implemented in your JS)
+function setSortOption(sortKey) {
+    currentSort = sortKey;
+    renderTasks();
+}
+
+// UPDATED renderTasks function for new filter, sort, and bulk select
 function renderTasks() {
     const container = document.getElementById('tasksContainer');
+    const bulkActionsContainer = document.getElementById('bulkActionsContainer');
     
     let filteredTasks = tasks;
     
     // Apply filter
-    if (currentFilter === 'completed') {
-        // Show ALL completed tasks (recurring or not)
+    if (currentFilter === 'all') {
+        // 'All' now shows ALL tasks, completed or not
+        filteredTasks = tasks;
+    } else if (currentFilter === 'completed') {
+        // Show ALL completed tasks
         filteredTasks = tasks.filter(t => t.completed);
     } else if (currentFilter === 'recurring') {
         // Show all PENDING recurring tasks
         filteredTasks = tasks.filter(t => !t.completed && t.repeat);
-    } else if (currentFilter === 'all') {
-        // 'All' should show all PENDING, NON-RECURRING tasks
-        filteredTasks = tasks.filter(t => !t.completed && !t.repeat);
     } else {
-        // Category filters (personal, office, misc)
-        // Show PENDING, NON-RECURRING tasks of that category
+        // Category filters (personal, office, misc) - Show PENDING tasks of that category
         filteredTasks = tasks.filter(t => !t.completed && !t.repeat && t.category === currentFilter);
     }
     
-    // Sort by priority and due date
+    // Apply sort
     filteredTasks.sort((a, b) => {
-        // If 'completed' tab, sort by completed date descending
-        if (currentFilter === 'completed') {
-            if (!a.completedAt) return 1; // Move nulls to bottom
-            if (!b.completedAt) return -1;
-            return new Date(b.completedAt) - new Date(a.completedAt);
+        const priorityOrder = { urgent: 0, high: 1, medium: 2, low: 3 };
+        
+        let comparison = 0;
+
+        switch (currentSort) {
+            case 'dueDate':
+                const dateA = a.dueDate ? new Date(a.dueDate).getTime() : Infinity;
+                const dateB = b.dueDate ? new Date(b.dueDate).getTime() : Infinity;
+                comparison = dateA - dateB;
+                break;
+            case 'priority':
+                comparison = priorityOrder[a.priority] - priorityOrder[b.priority];
+                break;
+            case 'title':
+                comparison = a.title.localeCompare(b.title);
+                break;
+            case 'creationDate':
+                comparison = new Date(b.createdAt) - new Date(a.createdAt); // Newest first
+                break;
         }
 
-        const priorityOrder = { urgent: 0, high: 1, medium: 2, low: 3 };
-        const priorityDiff = priorityOrder[a.priority] - priorityOrder[b.priority];
+        if (comparison !== 0) return comparison;
         
-        if (priorityDiff !== 0) return priorityDiff;
-        
-        if (a.dueDate && b.dueDate) {
-            return new Date(a.dueDate) - new Date(b.dueDate);
-        } else if (a.dueDate) {
-            return -1; // Tasks with due dates come first
-        } else if (b.dueDate) {
-            return 1;
-        }
-        
-        return new Date(b.createdAt) - new Date(a.createdAt);
+        // Fallback sort (e.g., if titles or priorities are the same)
+        return new Date(b.createdAt) - new Date(a.createdAt); 
     });
+
+    // Render bulk actions UI
+    if (filteredTasks.length > 0) {
+        bulkActionsContainer.classList.remove('hidden');
+        bulkActionsContainer.querySelector('#selectAllCheckbox').checked = false; // Reset select all
+        bulkActionsContainer.querySelector('#selectAllCheckbox').indeterminate = false;
+        // updateBulkActionUI(); // This is called at the end
+    } else {
+        bulkActionsContainer.classList.add('hidden');
+        selectedTasks.clear();
+    }
     
     if (filteredTasks.length === 0) {
         let message = "No tasks found";
@@ -430,12 +566,12 @@ function renderTasks() {
                 subMessage = "Get to work and check some tasks off your list!";
                 break;
             case 'recurring':
-                message = "No recurring tasks";
+                message = "No pending recurring tasks";
                 subMessage = "Create a task and check 'Repetitive Task' to add one.";
                 break;
             case 'all':
-                message = "All tasks complete!";
-                subMessage = "Add a new task or enjoy your free time.";
+                message = "Task list empty";
+                subMessage = "Add a new task to your list!";
                 break;
              default:
                 message = `No tasks in '${capitalize(currentFilter)}'`;
@@ -457,9 +593,16 @@ function renderTasks() {
             <div class="task-header">
                 <div class="task-title-section">
                     <input type="checkbox" 
+                           class="task-checkbox-multi" 
+                           value="${task.id}"
+                           ${selectedTasks.has(task.id) ? 'checked' : ''} 
+                           onchange="toggleTaskSelection('${task.id}', this.checked)">
+                           
+                    <input type="checkbox" 
                            class="task-checkbox" 
                            ${task.completed ? 'checked' : ''} 
                            onchange="toggleTask('${task.id}')">
+                           
                     <div>
                         <div class="task-title">${escapeHtml(task.title)}</div>
                     </div>
@@ -499,9 +642,11 @@ function renderTasks() {
             ` : ''}
         </div>
     `).join('');
+
+    updateBulkActionUI(); // Ensure UI reflects current selection
 }
 
-// Reminders
+// Reminders (Logic remains the same)
 function checkReminders() {
     const now = new Date();
     
@@ -510,9 +655,7 @@ function checkReminders() {
             const reminderTime = new Date(task.reminder);
             const timeDiff = reminderTime.getTime() - now.getTime();
             
-            // Show notification if reminder is within 1 minute of firing
             if (timeDiff > 0 && timeDiff <= 60 * 1000) {
-                // Check if we've already notified for this reminder
                 const notified = localStorage.getItem(`notified_${task.id}`);
                 if (notified !== task.reminder) {
                     showNotification(task);
@@ -539,11 +682,7 @@ function showNotification(task) {
     }
 }
 
-// ============================================
-// AI INSIGHTS FUNCTIONS (NEW & MODIFIED)
-// ============================================
-
-// NEW: Function to render the summary at the top
+// AI INSIGHTS FUNCTIONS (Logic remains the same)
 function renderAISummary() {
     const insights = generateAIInsights(tasks);
     const container = document.getElementById('aiSummaryContent');
@@ -553,7 +692,6 @@ function renderAISummary() {
         return;
     }
     
-    // Show top 3 insights
     container.innerHTML = insights.slice(0, 3).map(insight => `
         <p class="ai-summary-item">
             <i class="fas fa-lightbulb"></i>
@@ -562,7 +700,6 @@ function renderAISummary() {
     `).join('');
 }
 
-// NEW: Function to toggle the summary visibility
 function toggleAISummary() {
     const content = document.getElementById('aiSummaryContent');
     const btn = document.getElementById('toggleSummaryBtn');
@@ -579,8 +716,6 @@ function toggleAISummary() {
     }
 }
 
-
-// MODIFIED: This function now just shows the full modal report
 function showInsights() {
     const total = tasks.length;
     const completed = tasks.filter(t => t.completed).length;
@@ -613,7 +748,6 @@ function showInsights() {
         return new Date(t.dueDate).toDateString() === today;
     });
     
-    // AI-powered insights (all of them)
     const insights = generateAIInsights(tasks);
     
     const content = `
@@ -666,7 +800,7 @@ function showInsights() {
             <h3><i class="fas fa-flag"></i> Pending By Priority</h3>
             <div class="stat-grid">
                 <div class="stat-item">
-                    <div class="stat-value" style="color: #ef4444;">${byPriority.urgent}</div>
+                    <div class="stat-value" style="color: var(--danger-color);">${byPriority.urgent}</div>
                     <div class="stat-label">Urgent</div>
                 </div>
                 <div class="stat-item">
@@ -674,11 +808,11 @@ function showInsights() {
                     <div class="stat-label">High</div>
                 </div>
                 <div class="stat-item">
-                    <div class="stat-value" style="color: #f59e0b;">${byPriority.medium}</div>
+                    <div class="stat-value" style="color: var(--warning-color);">${byPriority.medium}</div>
                     <div class="stat-label">Medium</div>
                 </div>
                 <div class="stat-item">
-                    <div class="stat-value" style="color: #10b981;">${byPriority.low}</div>
+                    <div class="stat-value" style="color: var(--success-color);">${byPriority.low}</div>
                     <div class="stat-label">Low</div>
                 </div>
             </div>
@@ -688,11 +822,11 @@ function showInsights() {
             <h3><i class="fas fa-calendar-alt"></i> Schedule Overview (Pending)</h3>
             <div class="stat-grid">
                 <div class="stat-item">
-                    <div class="stat-value" style="color: #ef4444;">${overdue.length}</div>
+                    <div class="stat-value" style="color: var(--danger-color);">${overdue.length}</div>
                     <div class="stat-label">Overdue</div>
                 </div>
                 <div class="stat-item">
-                    <div class="stat-value" style="color: #f59e0b;">${dueToday.length}</div>
+                    <div class="stat-value" style="color: var(--warning-color);">${dueToday.length}</div>
                     <div class="stat-label">Due Today</div>
                 </div>
             </div>
@@ -713,7 +847,6 @@ function showInsights() {
     document.getElementById('insightsModal').classList.remove('hidden');
 }
 
-// This function remains the same
 function generateAIInsights(tasks) {
     const insights = [];
     
@@ -766,7 +899,6 @@ function generateAIInsights(tasks) {
         insights.push(`Amazing! You have no pending tasks. Enjoy your free time or plan ahead for upcoming projects.`);
     }
     
-    // Add a default message if no other insights are generated
     if (insights.length === 0 && tasks.length > 0) {
         insights.push('Your task list is looking manageable. Keep up the good work!');
     }
@@ -797,12 +929,9 @@ function closeSettingsModal() {
 }
 
 function saveSettings() {
-    // Save settings from form
     settings.defaultCategory = document.getElementById('defaultCategory').value;
     settings.defaultPriority = document.getElementById('defaultPriority').value;
     settings.defaultReminderHours = parseInt(document.getElementById('defaultReminderHours').value);
-    
-    // Note: PIN settings are saved in savePinSettings()
     
     localStorage.setItem('taskmaster_settings', JSON.stringify(settings));
     showToast('Settings saved successfully', 'success');
@@ -815,21 +944,16 @@ function loadSettings() {
     }
 }
 
-// ============================================
-// IMPORT/EXPORT FUNCTIONS (Enhanced)
-// ============================================
-
-// Helper function to generate timestamped filename
+// Import/Export (Logic remains the same)
 function getTimestampedFilename(baseName, extension) {
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
     return `${baseName}_${timestamp}.${extension}`;
 }
 
-// Export to JSON with metadata and timestamp
 function exportToJSON() {
     const exportData = {
         exportedAt: new Date().toISOString(),
-        version: '1.0',
+        version: '1.1',
         totalTasks: tasks.length,
         tasks: tasks
     };
@@ -840,7 +964,6 @@ function exportToJSON() {
     showToast(`Tasks exported to ${filename}`, 'success');
 }
 
-// Export to CSV with timestamp
 function exportToCSV() {
     const timestamp = new Date().toISOString();
     let csv = `# Exported at: ${timestamp}\n`;
@@ -855,9 +978,7 @@ function exportToCSV() {
     showToast(`Tasks exported to ${filename}`, 'success');
 }
 
-// Export to Excel with timestamp and metadata
 function exportToExcel() {
-    // Check if XLSX library is loaded
     if (typeof XLSX === 'undefined') {
         showToast('Excel export library not loaded. Please check your connection.', 'error');
         return;
@@ -882,7 +1003,6 @@ function exportToExcel() {
         'Previous Instance ID': task.previousInstanceId || ''
     }));
     
-    // Add metadata sheet
     const metadata = [{
         'Property': 'Exported At',
         'Value': timestamp
@@ -891,7 +1011,7 @@ function exportToExcel() {
         'Value': tasks.length
     }, {
         'Property': 'Version',
-        'Value': '1.0'
+        'Value': '1.1'
     }];
     
     const ws = XLSX.utils.json_to_sheet(data);
@@ -907,9 +1027,7 @@ function exportToExcel() {
     showToast(`Tasks exported to ${filename}`, 'success');
 }
 
-// Export to PDF with timestamp
 function exportToPDF() {
-    // Check if jsPDF library is loaded
     if (typeof jspdf === 'undefined') {
         showToast('PDF export library not loaded. Please check your connection.', 'error');
         return;
@@ -932,7 +1050,7 @@ function exportToPDF() {
     const pageHeight = doc.internal.pageSize.height;
     
     tasks.forEach((task, index) => {
-        if (y > pageHeight - 30) { // Add more margin at bottom
+        if (y > pageHeight - 30) {
             doc.addPage();
             y = 20;
         }
@@ -964,7 +1082,7 @@ function exportToPDF() {
             y += lineHeight;
         }
         
-        y += 3; // Extra space between tasks
+        y += 3;
     });
     
     const filename = getTimestampedFilename('tasks', 'pdf');
@@ -972,16 +1090,15 @@ function exportToPDF() {
     showToast(`Tasks exported to ${filename}`, 'success');
 }
 
-// Export to Google Calendar with timestamp
 function exportToGoogleCalendar() {
     let icsContent = 'BEGIN:VCALENDAR\nVERSION:2.0\nPRODID:-//TaskMaster Pro//EN\n';
     icsContent += `X-WR-CALNAME:TaskMaster Pro Tasks\n`;
     icsContent += `X-PUBLISHED-TTL:PT1H\n`;
     
     tasks.forEach(task => {
-        if (task.dueDate && !task.completed) { // Only export pending tasks with due dates
+        if (task.dueDate && !task.completed) {
             const start = new Date(task.dueDate);
-            const end = new Date(start.getTime() + 60 * 60 * 1000); // 1 hour duration
+            const end = new Date(start.getTime() + 60 * 60 * 1000);
             
             icsContent += 'BEGIN:VEVENT\n';
             icsContent += `UID:${task.id}@taskmasterpro.com\n`;
@@ -994,7 +1111,6 @@ function exportToGoogleCalendar() {
             }
             icsContent += `PRIORITY:${getPriorityNumber(task.priority)}\n`;
             
-            // Add reminder
             if (task.reminder) {
                 const reminderDate = new Date(task.reminder);
                 const diff = start.getTime() - reminderDate.getTime();
@@ -1008,7 +1124,6 @@ function exportToGoogleCalendar() {
                 }
             }
 
-            // Add recurrence
             if (task.repeat) {
                 let rrule = '';
                 switch(task.repeatFrequency) {
@@ -1033,30 +1148,17 @@ function exportToGoogleCalendar() {
     showToast(`Calendar file created: ${filename}`, 'success');
 }
 
-// Enhanced duplicate detection
 function isDuplicate(newTask, existingTask) {
-    // Check by ID first (most reliable)
-    if (newTask.id && existingTask.id && newTask.id === existingTask.id) {
-        return true;
-    }
-    
-    // Check by title and created date (strong match)
-    if (newTask.title === existingTask.title && 
-        newTask.createdAt === existingTask.createdAt) {
-        return true;
-    }
-    
-    // Check by title, category, and due date (likely duplicate)
-    if (newTask.title.toLowerCase().trim() === existingTask.title.toLowerCase().trim() &&
+    if (newTask.id && existingTask.id && newTask.id === existingTask.id) return true;
+    if (newTask.title === existingTask.title && existingTask.title && newTask.createdAt === existingTask.createdAt) return true;
+    if (newTask.title && existingTask.title && newTask.title.toLowerCase().trim() === existingTask.title.toLowerCase().trim() &&
         newTask.category === existingTask.category &&
         newTask.dueDate === existingTask.dueDate) {
         return true;
     }
-    
     return false;
 }
 
-// Enhanced import function with smart duplicate detection
 function importFile(event) {
     const file = event.target.files[0];
     if (!file) return;
@@ -1069,39 +1171,28 @@ function importFile(event) {
             let importedData = null;
             let importedTasks = [];
             
-            // Parse different file formats
             if (file.name.endsWith('.json')) {
                 importedData = JSON.parse(content);
-                
-                // Check if it's our enhanced export format with metadata
                 if (importedData.tasks && Array.isArray(importedData.tasks)) {
                     importedTasks = importedData.tasks;
-                    console.log(`Importing from export dated: ${importedData.exportedAt}`);
                 } else if (Array.isArray(importedData)) {
                     importedTasks = importedData;
                 } else {
                     throw new Error('Invalid JSON format');
                 }
-                
             } else if (file.name.endsWith('.csv')) {
                 importedTasks = parseCSV(content);
-                
             } else if (file.name.endsWith('.xlsx')) {
-                // Check if XLSX library is loaded
                 if (typeof XLSX === 'undefined') {
                     showToast('Excel library not loaded. Please check your connection.', 'error');
                     return;
                 }
                 const workbook = XLSX.read(content, { type: 'binary' });
-                
-                // Try to read from Tasks sheet first, fallback to first sheet
                 let sheetName = 'Tasks';
-                if (!workbook.Sheets[sheetName]) {
-                    sheetName = workbook.SheetNames[0];
-                }
+                if (!workbook.Sheets[sheetName]) sheetName = workbook.SheetNames[0];
                 
                 const sheet = workbook.Sheets[sheetName];
-                const rawData = XLSX.utils.sheet_to_json(sheet, {raw: false}); // raw: false to parse dates
+                const rawData = XLSX.utils.sheet_to_json(sheet, {raw: false});
                 
                 importedTasks = rawData.map(row => ({
                     id: row.ID ? String(row.ID) : (Date.now().toString() + Math.random().toString(36).substr(2, 9)),
@@ -1123,56 +1214,41 @@ function importFile(event) {
                 throw new Error('Unsupported file format. Please use JSON, CSV, or XLSX files.');
             }
             
-            // Validate imported tasks
             if (!Array.isArray(importedTasks) || importedTasks.length === 0) {
                 showToast('No valid tasks found in file', 'error');
                 return;
             }
             
-            // Smart duplicate detection and incremental import
             let newCount = 0;
             let duplicateCount = 0;
             let skippedCount = 0;
             
             importedTasks.forEach(importedTask => {
-                // Ensure task has required fields
                 if (!importedTask.title || String(importedTask.title).trim() === '') {
                     skippedCount++;
-                    return; // Skip invalid tasks
+                    return;
                 }
                 
-                // Check for duplicates
-                let isDup = false;
-                
-                for (let i = 0; i < tasks.length; i++) {
-                    if (isDuplicate(importedTask, tasks[i])) {
-                        isDup = true;
-                        break;
-                    }
-                }
+                let isDup = tasks.some(existingTask => isDuplicate(importedTask, existingTask));
                 
                 if (isDup) {
                     duplicateCount++;
                 } else {
-                    // Ensure unique ID
                     if (!importedTask.id || tasks.some(t => t.id === importedTask.id)) {
                         importedTask.id = Date.now().toString() + Math.random().toString(36).substr(2, 9);
                     }
                     
-                    // Add new task
                     tasks.push(importedTask);
                     newCount++;
                 }
             });
             
-            // Save and refresh if there are new tasks
             if (newCount > 0) {
                 saveTasks();
                 renderTasks();
-                renderAISummary(); // Update insights
+                renderAISummary();
             }
             
-            // Show detailed import results
             let message = '';
             if (newCount > 0) message += `✓ ${newCount} new task(s) imported. `;
             if (duplicateCount > 0) message += `⊗ ${duplicateCount} duplicate(s) skipped. `;
@@ -1190,27 +1266,19 @@ function importFile(event) {
         }
     };
     
-    // Read file based on type
     if (file.name.endsWith('.xlsx')) {
         reader.readAsBinaryString(file);
     } else {
         reader.readAsText(file);
     }
     
-    // Reset file input
     event.target.value = '';
 }
 
-// Enhanced CSV parser
 function parseCSV(content) {
-    // Remove comment lines (starting with #)
     const lines = content.split('\n').filter(line => line.trim() && !line.trim().startsWith('#'));
+    if (lines.length < 2) return [];
     
-    if (lines.length < 2) {
-        return [];
-    }
-    
-    // Regex to split CSV, handling quotes
     const splitCsvLine = (line) => {
         const result = [];
         let current = '';
@@ -1220,7 +1288,7 @@ function parseCSV(content) {
             if (char === '"') {
                 if (inQuote && line[i+1] === '"') {
                     current += '"';
-                    i++; // Skip next quote
+                    i++;
                 } else {
                     inQuote = !inQuote;
                 }
@@ -1240,21 +1308,13 @@ function parseCSV(content) {
     
     const getHeaderIndex = (name) => headers.findIndex(h => h.toLowerCase() === name.toLowerCase());
 
-    const idIndex = getHeaderIndex('ID');
-    const titleIndex = getHeaderIndex('Title');
-    const descIndex = getHeaderIndex('Description');
-    const catIndex = getHeaderIndex('Category');
-    const prioIndex = getHeaderIndex('Priority');
-    const dueIndex = getHeaderIndex('Due Date');
-    const reminderIndex = getHeaderIndex('Reminder');
-    const repeatIndex = getHeaderIndex('Repeat');
-    const freqIndex = getHeaderIndex('Repeat Frequency');
-    const tagsIndex = getHeaderIndex('Tags');
-    const completedIndex = getHeaderIndex('Completed');
-    const createdIndex = getHeaderIndex('Created At');
-    const completedAtIndex = getHeaderIndex('Completed At');
-    const prevIdIndex = getHeaderIndex('Previous Instance ID');
-
+    const indices = {
+        id: getHeaderIndex('ID'), title: getHeaderIndex('Title'), desc: getHeaderIndex('Description'),
+        cat: getHeaderIndex('Category'), prio: getHeaderIndex('Priority'), due: getHeaderIndex('Due Date'),
+        reminder: getHeaderIndex('Reminder'), repeat: getHeaderIndex('Repeat'), freq: getHeaderIndex('Repeat Frequency'),
+        tags: getHeaderIndex('Tags'), completed: getHeaderIndex('Completed'), created: getHeaderIndex('Created At'),
+        completedAt: getHeaderIndex('Completed At'), prevId: getHeaderIndex('Previous Instance ID')
+    };
 
     for (let i = 1; i < lines.length; i++) {
         if (!lines[i].trim()) continue;
@@ -1262,20 +1322,20 @@ function parseCSV(content) {
         const values = splitCsvLine(lines[i]);
         const task = {};
 
-        task.id = values[idIndex] || (Date.now().toString() + Math.random().toString(36).substr(2, 9));
-        task.title = values[titleIndex] || '';
-        task.description = values[descIndex] || '';
-        task.category = values[catIndex] || 'personal';
-        task.priority = values[prioIndex] || 'medium';
-        task.dueDate = values[dueIndex] || null;
-        task.reminder = values[reminderIndex] || null;
-        task.repeat = String(values[repeatIndex]).toLowerCase() === 'true' || String(values[repeatIndex]).toLowerCase() === 'yes';
-        task.repeatFrequency = values[freqIndex] || null;
-        task.tags = values[tagsIndex] ? values[tagsIndex].split(';').map(t => t.trim()).filter(t => t) : [];
-        task.completed = String(values[completedIndex]).toLowerCase() === 'true' || String(values[completedIndex]).toLowerCase() === 'yes';
-        task.createdAt = values[createdIndex] || new Date().toISOString();
-        task.completedAt = values[completedAtIndex] || null;
-        task.previousInstanceId = values[prevIdIndex] || null;
+        task.id = values[indices.id] || (Date.now().toString() + Math.random().toString(36).substr(2, 9));
+        task.title = values[indices.title] || '';
+        task.description = values[indices.desc] || '';
+        task.category = values[indices.cat] || 'personal';
+        task.priority = values[indices.prio] || 'medium';
+        task.dueDate = values[indices.due] || null;
+        task.reminder = values[indices.reminder] || null;
+        task.repeat = String(values[indices.repeat]).toLowerCase() === 'true' || String(values[indices.repeat]).toLowerCase() === 'yes';
+        task.repeatFrequency = values[indices.freq] || null;
+        task.tags = values[indices.tags] ? values[indices.tags].split(';').map(t => t.trim()).filter(t => t) : [];
+        task.completed = String(values[indices.completed]).toLowerCase() === 'true' || String(values[indices.completed]).toLowerCase() === 'yes';
+        task.createdAt = values[indices.created] || new Date().toISOString();
+        task.completedAt = values[indices.completedAt] || null;
+        task.previousInstanceId = values[indices.prevId] || null;
         
         if (task.title) {
             tasks.push(task);
@@ -1285,10 +1345,7 @@ function parseCSV(content) {
     return tasks;
 }
 
-// ============================================
-// STORAGE FUNCTIONS
-// ============================================
-
+// STORAGE FUNCTIONS (Logic remains the same)
 function saveTasks() {
     try {
         localStorage.setItem('taskmaster_tasks', JSON.stringify(tasks));
@@ -1303,13 +1360,12 @@ function loadTasks() {
     if (saved) {
         try {
             tasks = JSON.parse(saved);
-            // Data migration/sanitization if needed
             tasks = tasks.map(t => ({
                 ...t,
                 tags: Array.isArray(t.tags) ? t.tags : [],
                 priority: t.priority || 'medium',
                 category: t.category || 'personal',
-                previousInstanceId: t.previousInstanceId || null // Ensure new field exists
+                previousInstanceId: t.previousInstanceId || null
             }));
             renderTasks();
         } catch (e) {
@@ -1319,17 +1375,12 @@ function loadTasks() {
     }
 }
 
-// ============================================
-// UTILITY FUNCTIONS
-// ============================================
-
+// UTILITY FUNCTIONS (Logic remains the same)
 function showToast(message, type = 'success') {
     const toast = document.getElementById('toast');
-    if (!toast) return; // Guard against toast not existing
+    if (!toast) return;
     toast.textContent = message;
     toast.className = `toast ${type}`;
-    
-    // Show toast
     toast.classList.remove('hidden');
     
     setTimeout(() => {
@@ -1376,7 +1427,7 @@ function formatDate(dateString) {
     
     try {
         const date = new Date(dateString);
-        if (isNaN(date.getTime())) { // Check for invalid date
+        if (isNaN(date.getTime())) {
              throw new Error("Invalid date string");
         }
         const now = new Date();
@@ -1391,7 +1442,6 @@ function formatDate(dateString) {
         if (diffDays === 1) return 'Tomorrow ' + date.toLocaleTimeString([], timeFormat);
         if (diffDays === -1) return 'Yesterday ' + date.toLocaleTimeString([], timeFormat);
         
-        // Check if it's this year
         if (date.getFullYear() === now.getFullYear()) {
             return date.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' ' + date.toLocaleTimeString([], timeFormat);
         }
@@ -1399,7 +1449,7 @@ function formatDate(dateString) {
         return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], timeFormat);
     } catch (e) {
         console.error("Error formatting date:", dateString, e);
-        return dateString; // fallback
+        return dateString;
     }
 }
 
@@ -1413,13 +1463,10 @@ function getPriorityNumber(priority) {
     return map[priority] || 5;
 }
 
-// ============================================
-// INFORMATION PAGES (Using custom modal instead of alert)
-// ============================================
+// MODAL CONTROLS (Updated to use custom modals instead of alert/confirm)
 
 // Reusable function to show a simple info modal
 function showInfoModal(title, content) {
-    // Check if modal exists, if not, create it
     let infoModal = document.getElementById('infoModal');
     if (!infoModal) {
         infoModal = document.createElement('div');
@@ -1434,6 +1481,9 @@ function showInfoModal(title, content) {
                     </button>
                 </div>
                 <div id="infoModalContent" style="padding: 1.5rem; line-height: 1.6;"></div>
+                <div class="modal-footer" style="padding: 1.5rem; justify-content: flex-end; border-top: 2px solid var(--border-color); display: flex;">
+                    <button class="btn btn-secondary" onclick="closeInfoModal()">Close</button>
+                </div>
             </div>
         `;
         document.body.appendChild(infoModal);
@@ -1451,12 +1501,61 @@ function closeInfoModal() {
     }
 }
 
+// NEW: Reusable function for custom confirmation dialog
+function showConfirmModal(title, message, onConfirm) {
+    let confirmModal = document.getElementById('confirmModal');
+    if (!confirmModal) {
+        confirmModal = document.createElement('div');
+        confirmModal.id = 'confirmModal';
+        confirmModal.className = 'modal hidden';
+        confirmModal.innerHTML = `
+            <div class="modal-content small-modal">
+                <div class="modal-header">
+                    <h2 id="confirmModalTitle"></h2>
+                    <button class="close-btn" onclick="closeConfirmModal()">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+                <div id="confirmModalMessage" style="padding: 1.5rem; line-height: 1.6;"></div>
+                <div class="modal-footer" style="padding: 1.5rem; display: flex; gap: 1rem; justify-content: flex-end; border-top: 2px solid var(--border-color);">
+                    <button class="btn btn-secondary" id="confirmCancelBtn" onclick="closeConfirmModal()">Cancel</button>
+                    <button class="btn btn-danger" id="confirmOkBtn">Confirm</button>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(confirmModal);
+    }
+
+    document.getElementById('confirmModalTitle').textContent = title;
+    document.getElementById('confirmModalMessage').textContent = message;
+    
+    const confirmOkBtn = document.getElementById('confirmOkBtn');
+    
+    // Clear previous event listener
+    const newConfirmOkBtn = confirmOkBtn.cloneNode(true);
+    confirmOkBtn.parentNode.replaceChild(newConfirmOkBtn, confirmOkBtn);
+    
+    // Add new event listener
+    newConfirmOkBtn.addEventListener('click', () => {
+        onConfirm();
+        closeConfirmModal();
+    });
+
+    confirmModal.classList.remove('hidden');
+}
+
+function closeConfirmModal() {
+    const confirmModal = document.getElementById('confirmModal');
+    if (confirmModal) {
+        confirmModal.classList.add('hidden');
+    }
+}
 
 function showAbout() {
     showInfoModal(
         '<i class="fas fa-check-circle"></i> About TaskMaster Pro',
-        `<p><strong>Version: 1.1 (Robust Toggle)</strong></p>
-         <p>A comprehensive task management application with AI-powered insights, recurring tasks, and offline support.</p>
+        `<p><strong>Version: 1.2 (Advanced Management)</strong></p>
+         <p>A comprehensive task management application with AI-powered insights, recurring tasks, bulk actions, and advanced sorting.</p>
          <p>Developed with ❤️ by <strong>Santosh Phuyal</strong></p>`
     );
 }
@@ -1467,14 +1566,12 @@ function showHelp() {
         `<ul style="list-style-position: inside; padding-left: 1rem;">
             <li><strong>Quick Add:</strong> Type task title and press Enter.</li>
             <li><strong>Advanced Add:</strong> Click the sliders icon (<i class="fas fa-sliders-h"></i>) for more options.</li>
-            <li><strong>AI Summary:</strong> Click the header at the top to see quick insights.</li>
-            <li><strong>Full Report:</strong> Click the chart icon (<i class="fas fa-chart-line"></i>) in the header for a full report.</li>
-            <li><strong>Recurring Tasks:</strong> Check the 'Repetitive Task' box. View all pending recurring tasks in the 'Recurring' tab.</li>
-            <li><strong>Complete Task:</strong> Click the checkbox. Completed recurring tasks will generate their next occurrence.</li>
-            <li><strong>Un-check Task:</strong> Click a completed task's checkbox. This will move it back to pending and *remove* the next recurring instance if one was created.</li>
-            <li><strong>Edit/Delete:</strong> Use the <i class="fas fa-edit"></i> and <i class="fas fa-trash"></i> icons on each task.</li>
-            <li><strong>Export/Import:</strong> Access from Settings (<i class="fas fa-cog"></i>).</li>
-            <li><strong>PIN Protection:</strong> Enable from Settings for app protection.</li>
+            <li><strong>All Tab:</strong> Now shows **all** tasks (pending and completed).</li>
+            <li><strong>Bulk Delete:</strong> Use the leftmost checkbox on each task to select multiple items, then click **Delete Selected**.</li>
+            <li><strong>Clear All:</strong> Use the **Clear All Tasks** button in the Settings modal to delete everything at once.</li>
+            <li><strong>Sorting:</strong> Use the **Sort By** dropdown above the task list.</li>
+            <li><strong>Complete Task:</strong> Click the inner checkbox. Completed recurring tasks will generate their next occurrence.</li>
+            <li><strong>Un-check Task:</strong> Click a completed task's checkbox. This will move it back to pending and *remove* the next recurring instance.</li>
          </ul>`
     );
 }
@@ -1487,14 +1584,9 @@ function showPrivacy() {
     );
 }
 
-// ============================================
 // INITIALIZATION
-// ============================================
-
-// Request notification permission on load
 window.addEventListener('load', () => {
     if ('Notification' in window && Notification.permission === 'default') {
         Notification.requestPermission();
     }
 });
-
