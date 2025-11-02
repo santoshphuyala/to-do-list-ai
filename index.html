@@ -35,7 +35,7 @@
                         <button class="icon-btn" onclick="toggleDarkMode()" title="Toggle Dark Mode">
                             <i class="fas fa-moon" id="themeIcon"></i>
                         </button>
-                        <button class="icon-btn" onclick="showInsights()" title="AI Insights">
+                        <button class="icon-btn" onclick="showInsights()" title="Full Insights Report">
                             <i class="fas fa-chart-line"></i>
                         </button>
                         <button class="icon-btn" onclick="openSettings()" title="Settings">
@@ -45,6 +45,21 @@
                 </div>
             </div>
         </header>
+
+        <!-- NEW: AI Summary Section -->
+        <section id="aiSummarySection" class="ai-summary-section">
+            <div class="container">
+                <div class="ai-summary-header">
+                    <h3><i class="fas fa-brain"></i> AI Insights</h3>
+                    <button class="icon-btn" id="toggleSummaryBtn" title="Show Insights">
+                        <i class="fas fa-chevron-down"></i>
+                    </button>
+                </div>
+                <div id="aiSummaryContent" class="ai-summary-content hidden">
+                    <!-- AI summary insights will be rendered here by app.js -->
+                </div>
+            </div>
+        </section>
 
         <!-- Quick Add Task -->
         <section class="quick-add">
@@ -61,7 +76,7 @@
             </div>
         </section>
 
-        <!-- Filter Tabs -->
+        <!-- Filter Tabs (UPDATED) -->
         <section class="filter-section">
             <div class="container">
                 <div class="tabs">
@@ -69,6 +84,7 @@
                     <button class="tab" onclick="filterTasks('personal')">Personal</button>
                     <button class="tab" onclick="filterTasks('office')">Office</button>
                     <button class="tab" onclick="filterTasks('misc')">Misc</button>
+                    <button class="tab" onclick="filterTasks('recurring')">Recurring</button>
                     <button class="tab" onclick="filterTasks('completed')">Completed</button>
                 </div>
             </div>
@@ -166,11 +182,11 @@
             </div>
         </div>
 
-        <!-- Insights Modal -->
+        <!-- Insights Modal (Full Report) -->
         <div id="insightsModal" class="modal hidden">
             <div class="modal-content modal-large">
                 <div class="modal-header">
-                    <h2><i class="fas fa-brain"></i> AI-Powered Insights</h2>
+                    <h2><i class="fas fa-chart-line"></i> Full Insights Report</h2>
                     <button class="close-btn" onclick="closeInsightsModal()">
                         <i class="fas fa-times"></i>
                     </button>
@@ -286,9 +302,11 @@
     <script src="app.js"></script>
     <script>
         if ('serviceWorker' in navigator) {
-            navigator.serviceWorker.register('service-worker.js')
-                .then(reg => console.log('Service Worker registered'))
-                .catch(err => console.log('Service Worker registration failed'));
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('./service-worker.js') // Use relative path
+                    .then(reg => console.log('Service Worker registered'))
+                    .catch(err => console.log('Service Worker registration failed', err));
+            });
         }
     </script>
 </body>
