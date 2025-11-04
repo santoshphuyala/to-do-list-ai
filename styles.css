@@ -1127,3 +1127,111 @@ form {
 @keyframes spin {
     to { transform: rotate(360deg); }
 }
+
+/* Import Options Modal */
+.import-options-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.import-option-btn {
+    background: white;
+    border: 2px solid #e2e8f0;
+    border-radius: 12px;
+    padding: 16px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    text-align: left;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    position: relative;
+    overflow: hidden;
+}
+
+.import-option-btn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+.import-option-btn .option-icon {
+    font-size: 24px;
+    margin-bottom: 4px;
+}
+
+.import-option-btn .option-title {
+    font-size: 18px;
+    font-weight: 600;
+    color: #1e293b;
+}
+
+.import-option-btn .option-desc {
+    font-size: 14px;
+    color: #64748b;
+}
+
+.import-option-btn .option-warning,
+.import-option-btn .option-info {
+    font-size: 12px;
+    margin-top: 4px;
+    padding: 6px 10px;
+    border-radius: 6px;
+    background: #fef3c7;
+    color: #92400e;
+}
+
+.import-option-btn .option-info {
+    background: #dbeafe;
+    color: #1e40af;
+}
+
+.overwrite-btn {
+    border-color: #fca5a5;
+}
+
+.overwrite-btn:hover {
+    border-color: #ef4444;
+    background: #fef2f2;
+}
+
+.merge-btn {
+    border-color: #86efac;
+}
+
+.merge-btn:hover {
+    border-color: #22c55e;
+    background: #f0fdf4;
+}
+
+.merge-btn .option-warning {
+    display: none;
+}
+
+.cancel-btn {
+    border-color: #cbd5e1;
+}
+
+.cancel-btn:hover {
+    border-color: #94a3b8;
+    background: #f8fafc;
+}
+
+.cancel-btn .option-warning,
+.cancel-btn .option-info {
+    display: none;
+}
+
+@media (max-width: 600px) {
+    .import-option-btn .option-title {
+        font-size: 16px;
+    }
+    
+    .import-option-btn .option-desc {
+        font-size: 13px;
+    }
+    
+    .import-option-btn .option-icon {
+        font-size: 20px;
+    }
+}

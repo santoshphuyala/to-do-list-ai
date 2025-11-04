@@ -39,13 +39,13 @@
                 <div class="header-content">
                     <h1><i class="fas fa-check-circle"></i> TaskMaster Pro</h1>
                     <div class="header-actions">
-                        <button class="icon-btn" onclick="toggleDarkMode()" title="Toggle Dark Mode">
+                        <button class="icon-btn" onclick="toggleDarkMode()" title="Toggle Dark Mode" aria-label="Toggle Dark Mode">
                             <i class="fas fa-moon" id="themeIcon"></i>
                         </button>
-                        <button class="icon-btn" onclick="showInsights()" title="Full Insights Report">
+                        <button class="icon-btn" onclick="showInsights()" title="Full Insights Report" aria-label="Full Insights Report">
                             <i class="fas fa-chart-line"></i>
                         </button>
-                        <button class="icon-btn" onclick="openSettings()" title="Settings">
+                        <button class="icon-btn" onclick="openSettings()" title="Settings" aria-label="Settings">
                             <i class="fas fa-cog"></i>
                         </button>
                     </div>
@@ -82,6 +82,15 @@
 
         <section class="filter-section">
             <div class="container">
+                
+                <div class="search-container">
+                    <i class="fas fa-search search-icon"></i>
+                    <input type="text" id="searchInput" placeholder="Search tasks, descriptions, or tags..." class="search-input">
+                    <button id="clearSearchBtn" class="clear-search-btn hidden" onclick="clearSearch()" aria-label="Clear search">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+                
                 <div class="tabs">
                     <button class="tab active" onclick="filterTasks('all')">All</button>
                     <button class="tab" onclick="filterTasks('personal')">Personal</button>
@@ -104,10 +113,10 @@
                     <div class="sort-container">
                         <label for="sortSelect">Sort By:</label>
                         <select id="sortSelect" class="form-control">
+                            <option value="order">Manual Order</option>
                             <option value="priority">Priority</option>
                             <option value="dueDate">Due Date</option>
                             <option value="title">Title (A-Z)</option>
-                            <option value="creationDate">Creation Date</option>
                         </select>
                     </div>
                     <button id="deleteSelectedBtn" class="btn btn-danger" onclick="deleteSelectedTasks()" disabled>
@@ -115,7 +124,7 @@
                     </button>
                 </div>
 
-                <div id="tasksContainer" class="tasks-container">
+                <div id="tasksContainer" class="tasks-container" ondragover="handleDragOver(event)" ondrop="handleDrop(event)">
                 </div>
 
             </div>
@@ -131,20 +140,21 @@
                 </div>
                 <form id="taskForm" onsubmit="saveTask(event)">
                     <input type="hidden" id="taskId">
+                    <input type="hidden" id="taskParentId">
                     
                     <div class="form-group">
-                        <label>Task Title *</label>
+                        <label for="taskTitle">Task Title *</label>
                         <input type="text" id="taskTitle" required class="form-control">
                     </div>
 
                     <div class="form-group">
-                        <label>Description</label>
+                        <label for="taskDescription">Description</label>
                         <textarea id="taskDescription" rows="3" class="form-control"></textarea>
                     </div>
 
                     <div class="form-row">
                         <div class="form-group">
-                            <label>Category *</label>
+                            <label for="taskCategory">Category *</label>
                             <select id="taskCategory" required class="form-control">
                                 <option value="personal">Personal</option>
                                 <option value="office">Office</option>
@@ -153,7 +163,7 @@
                         </div>
 
                         <div class="form-group">
-                            <label>Priority *</label>
+                            <label for="taskPriority">Priority *</label>
                             <select id="taskPriority" required class="form-control">
                                 <option value="low">Low</option>
                                 <option value="medium">Medium</option>
@@ -165,12 +175,12 @@
 
                     <div class="form-row">
                         <div class="form-group">
-                            <label>Due Date</label>
+                            <label for="taskDueDate">Due Date</label>
                             <input type="datetime-local" id="taskDueDate" class="form-control">
                         </div>
 
                         <div class="form-group">
-                            <label>Reminder</label>
+                            <label for="taskReminder">Reminder</label>
                             <input type="datetime-local" id="taskReminder" class="form-control">
                         </div>
                     </div>
@@ -181,6 +191,7 @@
                             Repetitive Task
                         </label>
                         <div id="repeatOptions" class="repeat-options hidden">
+                            <label for="repeatFrequency" class="sr-only">Repeat Frequency</label>
                             <select id="repeatFrequency" class="form-control">
                                 <option value="daily">Daily</option>
                                 <option value="weekly">Weekly</option>
@@ -191,7 +202,7 @@
                     </div>
 
                     <div class="form-group">
-                        <label>Tags (comma separated)</label>
+                        <label for="taskTags">Tags (comma separated)</label>
                         <input type="text" id="taskTags" placeholder="work, urgent, meeting" class="form-control">
                     </div>
 
@@ -228,16 +239,16 @@
                     <h3>Default Options</h3>
                     
                     <div class="form-group">
-                        <label>Default Category</label>
+                        <label for="defaultCategory">Default Category</label>
                         <select id="defaultCategory" class="form-control">
                             <option value="personal">Personal</option>
                             <option value="office">Office</option>
-                            <option value-="misc">Misc Work</option>
+                            <option value="misc">Misc Work</option>
                         </select>
                     </div>
 
                     <div class="form-group">
-                        <label>Default Priority</label>
+                        <label for="defaultPriority">Default Priority</label>
                         <select id="defaultPriority" class="form-control">
                             <option value="low">Low</option>
                             <option value="medium">Medium</option>
@@ -247,7 +258,7 @@
                     </div>
 
                     <div class="form-group">
-                        <label>Default Reminder (hours before due)</label>
+                        <label for="defaultReminderHours">Default Reminder (hours before due)</label>
                         <input type="number" id="defaultReminderHours" min="0" value="2" class="form-control">
                     </div>
 
@@ -259,7 +270,9 @@
                             Enable PIN Protection
                         </label>
                         <div id="pinSettings" class="pin-settings hidden">
+                            <label for="newPin" class="sr-only">New PIN</label>
                             <input type="password" id="newPin" maxlength="6" placeholder="Enter 6-digit PIN" class="form-control">
+                            <label for="confirmPin" class="sr-only">Confirm PIN</label>
                             <input type="password" id="confirmPin" maxlength="6" placeholder="Confirm PIN" class="form-control">
                             <button onclick="savePinSettings()" class="btn btn-primary">Save PIN</button>
                         </div>
@@ -311,6 +324,50 @@
             </div>
         </div>
 
+        <div id="importOptionsModal" class="modal hidden">
+            <div class="modal-content small-modal">
+                <div class="modal-header">
+                    <h2 id="importOptionsTitle"><i class="fas fa-upload"></i> Import Options</h2>
+                    <button class="close-btn" onclick="handleImportCancel()">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+                <div class="settings-content" style="padding: 1.5rem;">
+                    <p id="importOptionsMessage" style="margin-bottom: 1.5rem; line-height: 1.6;">
+                        Your file contains <strong>X task(s)</strong>. How would you like to import them?
+                    </p>
+                    <div class="import-options-grid">
+                        
+                        <button class="import-option-btn merge-btn" onclick="handleImportMerge()">
+                            <i class="fas fa-plus-circle option-icon" style="color: #22c55e;"></i>
+                            <span class="option-title">Merge</span>
+                            <span class="option-desc">Adds new tasks from the file and skips duplicates.</span>
+                            <span class="option-info" id="mergeInfo">
+                                <strong>X</strong> new, <strong>Y</strong> duplicates found.
+                            </span>
+                        </button>
+
+                        <button class="import-option-btn overwrite-btn" onclick="handleImportOverwrite()">
+                            <i class="fas fa-exclamation-triangle option-icon" style="color: #ef4444;"></i>
+                            <span class="option-title">Overwrite</span>
+                            <span class="option-desc">Deletes all current tasks and replaces them with tasks from the file.</span>
+                            <span class="option-warning">
+                                <i class="fas fa-exclamation-circle"></i> This cannot be undone.
+                            </span>
+                        </button>
+
+                        <button class="import-option-btn cancel-btn" onclick="handleImportCancel()">
+                            <i class="fas fa-ban option-icon" style="color: #64748b;"></i>
+                            <span class="option-title">Cancel</span>
+                            <span class="option-desc">Do not import anything and close this dialog.</span>
+                        </button>
+                        
+                    </div>
+                </div>
+            </div>
+        </div>
+
+
         <footer class="footer">
             <div class="container">
                 <p>Developed with ❤️ by <strong>Santosh Phuyal</strong></p>
@@ -327,6 +384,7 @@
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/idb@7/build/umd.js"></script>
     <script src="app.js"></script>
     <script>
         if ('serviceWorker' in navigator) {

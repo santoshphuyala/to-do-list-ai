@@ -42,5 +42,15 @@
       "form_factor": "narrow",
       "label": "Task Edit Modal"
     }
+  ],
+  
+  "shortcuts": [
+    {
+      "name": "Add New Task",
+      "short_name": "New Task",
+      "description": "Quickly add a new task",
+      "url": "/index.html?action=add-task",
+      "icons": [{ "src": "android-chrome-192x192.png", "sizes": "192x192" }]
+    }
   ]
 }
