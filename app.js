@@ -1,19 +1,14 @@
-// *** NEW: IndexedDB Setup ***
+// *** IndexedDB Setup ***
 let db;
 const DB_NAME = 'TaskMasterDB';
 const TASK_STORE = 'tasks';
 const SETTINGS_STORE = 'settings';
 
-/**
- * Initializes the IndexedDB database and object stores.
- */
 async function initDB() {
     db = await idb.openDB(DB_NAME, 1, {
         upgrade(db) {
-            // Create the 'tasks' object store if it doesn't exist
             if (!db.objectStoreNames.contains(TASK_STORE)) {
                 const taskStore = db.createObjectStore(TASK_STORE, { keyPath: 'id' });
-                // Add indexes for efficient querying and sorting
                 taskStore.createIndex('category', 'category');
                 taskStore.createIndex('completed', 'completed');
                 taskStore.createIndex('priority', 'priority');
@@ -21,7 +16,6 @@ async function initDB() {
                 taskStore.createIndex('order', 'order');
                 taskStore.createIndex('parentId', 'parentId');
             }
-            // Create the 'settings' object store
             if (!db.objectStoreNames.contains(SETTINGS_STORE)) {
                 db.createObjectStore(SETTINGS_STORE, { keyPath: 'id' });
             }
@@ -29,58 +23,809 @@ async function initDB() {
     });
 }
 
-
 // Global State
 let tasks = [];
 let currentFilter = 'all';
 let currentEditingTask = null;
 let selectedTasks = new Set();
-let currentSort = 'order'; // *** UPDATED: Default sort is now manual 'order'
-let currentSearch = ''; // *** NEW: Search state
+let currentSort = 'order';
+let currentSearch = '';
 let settings = {
-    id: 'main-settings', // *** NEW: Key for IndexedDB settings object
+    id: 'main-settings',
     defaultCategory: 'personal',
     defaultPriority: 'medium',
     defaultReminderHours: 2,
     pinEnabled: false,
     pin: null,
-    theme: 'light'
+    theme: 'light',
+    focusMode: false, // *** NEW
+    showArchived: false // *** NEW
 };
 let pendingImportData = null;
-let lastFocusedElement = null; // *** NEW: For a11y focus management
+let lastFocusedElement = null;
+let collapsedTasks = new Set();
+let quickFilters = { // *** NEW: Quick filter state
+    priorities: new Set(),
+    tags: new Set(),
+    dueDateRange: null
+};
+let currentView = 'list'; // *** NEW: 'list' or 'matrix'
 
+// *** NEW: Collapsed state ***
+function loadCollapsedState() {
+    try {
+        const saved = localStorage.getItem('collapsedTasks');
+        if (saved) {
+            collapsedTasks = new Set(JSON.parse(saved));
+        }
+    } catch (e) {
+        console.error("Error loading collapsed state:", e);
+        collapsedTasks = new Set();
+    }
+}
+
+function saveCollapsedState() {
+    try {
+        localStorage.setItem('collapsedTasks', JSON.stringify([...collapsedTasks]));
+    } catch (e) {
+        console.error("Error saving collapsed state:", e);
+    }
+}
+
+function toggleCollapseTask(taskId, event) {
+    if (event) {
+        event.stopPropagation();
+    }
+    
+    if (collapsedTasks.has(taskId)) {
+        collapsedTasks.delete(taskId);
+    } else {
+        collapsedTasks.add(taskId);
+    }
+    
+    saveCollapsedState();
+    renderTasks();
+}
+
+// *** NEW: Subtask stats ***
+function getSubtaskStats(taskId) {
+    const allSubtasks = tasks.filter(t => t.parentId === taskId);
+    if (allSubtasks.length === 0) return null;
+    
+    const completed = allSubtasks.filter(t => t.completed).length;
+    const total = allSubtasks.length;
+    const percentage = Math.round((completed / total) * 100);
+    
+    return { completed, total, percentage };
+}
+
+// *** NEW: Due date status ***
+function getDueDateClass(dueDate) {
+    if (!dueDate) return '';
+    
+    const now = new Date();
+    const due = new Date(dueDate);
+    const diffMs = due.getTime() - now.getTime();
+    const diffHours = diffMs / (1000 * 60 * 60);
+    
+    if (diffMs < 0) return 'overdue';
+    if (diffHours < 24) return 'due-soon';
+    if (diffHours < 72) return 'due-upcoming';
+    
+    return '';
+}
+
+// *** NEW: Tab badges ***
+function updateTabBadges() {
+    const pendingTasks = tasks.filter(t => !t.completed && !t.archived);
+    
+    const counts = {
+        all: tasks.filter(t => !t.archived).length,
+        personal: pendingTasks.filter(t => t.category === 'personal').length,
+        office: pendingTasks.filter(t => t.category === 'office').length,
+        misc: pendingTasks.filter(t => t.category === 'misc').length,
+        recurring: pendingTasks.filter(t => t.repeat).length,
+        completed: tasks.filter(t => t.completed && !t.archived).length
+    };
+    
+    Object.keys(counts).forEach(key => {
+        const badge = document.getElementById(`badge-${key}`);
+        if (badge) {
+            badge.textContent = counts[key];
+            badge.style.display = counts[key] > 0 ? 'inline-block' : 'none';
+        }
+    });
+}
+
+// *** ENHANCED: AI Insights with more intelligence ***
+function generateEnhancedAIInsights(tasks) {
+    const insights = [];
+    const activeTasks = tasks.filter(t => !t.archived);
+    const pending = activeTasks.filter(t => !t.completed);
+    const completed = activeTasks.filter(t => t.completed);
+    
+    // Priority insights
+    const urgent = pending.filter(t => t.priority === 'urgent');
+    const high = pending.filter(t => t.priority === 'high');
+    
+    if (urgent.length > 0) {
+        insights.push({
+            type: 'warning',
+            icon: 'fa-exclamation-triangle',
+            message: `${urgent.length} urgent task${urgent.length > 1 ? 's require' : ' requires'} immediate attention!`,
+            action: () => {
+                quickFilters.priorities.clear();
+                quickFilters.priorities.add('urgent');
+                applyQuickFilters();
+            },
+            actionLabel: 'Show Urgent'
+        });
+    }
+    
+    // Overdue insights
+    const now = new Date();
+    const overdue = pending.filter(t => t.dueDate && new Date(t.dueDate) < now);
+    if (overdue.length > 0) {
+        insights.push({
+            type: 'danger',
+            icon: 'fa-clock',
+            message: `${overdue.length} task${overdue.length > 1 ? 's are' : ' is'} overdue. Time to catch up!`,
+            action: () => {
+                setSortOption('dueDate');
+                filterTasks('all');
+            },
+            actionLabel: 'Sort by Date'
+        });
+    }
+    
+    // Today's tasks
+    const today = new Date().toDateString();
+    const dueToday = pending.filter(t => {
+        if (!t.dueDate) return false;
+        return new Date(t.dueDate).toDateString() === today;
+    });
+    
+    if (dueToday.length > 0) {
+        insights.push({
+            type: 'info',
+            icon: 'fa-calendar-day',
+            message: `${dueToday.length} task${dueToday.length > 1 ? 's' : ''} due today. Let's get them done!`,
+            action: () => toggleFocusMode(),
+            actionLabel: 'Focus Mode'
+        });
+    }
+    
+    // Productivity trends
+    const last7Days = completed.filter(t => {
+        if (!t.completedAt) return false;
+        const completedDate = new Date(t.completedAt);
+        const daysDiff = (now - completedDate) / (1000 * 60 * 60 * 24);
+        return daysDiff <= 7;
+    });
+    
+    if (last7Days.length >= 5) {
+        insights.push({
+            type: 'success',
+            icon: 'fa-trophy',
+            message: `Great momentum! You completed ${last7Days.length} tasks in the last 7 days.`,
+            action: () => showInsights(),
+            actionLabel: 'View Stats'
+        });
+    } else if (completed.length > 0 && last7Days.length === 0) {
+        insights.push({
+            type: 'warning',
+            icon: 'fa-chart-line',
+            message: `No tasks completed recently. Time to make progress!`,
+            action: () => {
+                setSortOption('priority');
+                filterTasks('all');
+            },
+            actionLabel: 'Prioritize'
+        });
+    }
+    
+    // Workload balance
+    const byCategory = {
+        personal: pending.filter(t => t.category === 'personal').length,
+        office: pending.filter(t => t.category === 'office').length,
+        misc: pending.filter(t => t.category === 'misc').length
+    };
+    
+    const maxCat = Math.max(...Object.values(byCategory));
+    const imbalanced = maxCat > 10 && maxCat > (pending.length * 0.7);
+    
+    if (imbalanced) {
+        const heavyCat = Object.keys(byCategory).find(k => byCategory[k] === maxCat);
+        insights.push({
+            type: 'info',
+            icon: 'fa-balance-scale',
+            message: `Your ${heavyCat} tasks are piling up (${maxCat}). Consider delegating or prioritizing.`,
+            action: () => filterTasks(heavyCat),
+            actionLabel: `View ${capitalize(heavyCat)}`
+        });
+    }
+    
+    // Time estimate warnings
+    const withEstimates = pending.filter(t => t.estimatedMinutes);
+    if (withEstimates.length > 0) {
+        const totalMinutes = withEstimates.reduce((sum, t) => sum + (t.estimatedMinutes || 0), 0);
+        const totalHours = Math.round(totalMinutes / 60 * 10) / 10;
+        
+        if (totalHours > 40) {
+            insights.push({
+                type: 'warning',
+                icon: 'fa-hourglass-half',
+                message: `${totalHours} hours of estimated work ahead. Break it into smaller chunks!`,
+                action: () => setSortOption('dueDate'),
+                actionLabel: 'Plan Schedule'
+            });
+        }
+    }
+    
+    // Completion rate
+    if (activeTasks.length > 0) {
+        const completionRate = Math.round((completed.length / activeTasks.length) * 100);
+        if (completionRate >= 70) {
+            insights.push({
+                type: 'success',
+                icon: 'fa-star',
+                message: `Outstanding! ${completionRate}% completion rate. You're crushing it! 🎉`,
+                action: () => showInsights(),
+                actionLabel: 'Celebrate'
+            });
+        }
+    }
+    
+    // No pending tasks
+    if (pending.length === 0 && activeTasks.length > 0) {
+        insights.push({
+            type: 'success',
+            icon: 'fa-check-double',
+            message: `All caught up! No pending tasks. Time to relax or plan ahead.`,
+            action: () => openAdvancedForm(),
+            actionLabel: 'Add New Task'
+        });
+    }
+    
+    // Default message
+    if (insights.length === 0 && activeTasks.length > 0) {
+        insights.push({
+            type: 'info',
+            icon: 'fa-lightbulb',
+            message: 'Your task list is well-balanced. Keep up the good work!',
+            action: null,
+            actionLabel: null
+        });
+    }
+    
+    if (activeTasks.length === 0) {
+        insights.push({
+            type: 'info',
+            icon: 'fa-inbox',
+            message: 'No tasks yet. Start by adding your first task!',
+            action: () => openAdvancedForm(),
+            actionLabel: 'Add Task'
+        });
+    }
+    
+    return insights;
+}
+
+// *** NEW: Render Enhanced AI Dashboard ***
+function renderAIDashboard() {
+    const container = document.getElementById('aiDashboard');
+    if (!container) return;
+    
+    const activeTasks = tasks.filter(t => !t.archived);
+    const pending = activeTasks.filter(t => !t.completed);
+    const completed = activeTasks.filter(t => t.completed);
+    const insights = generateEnhancedAIInsights(tasks);
+    
+    // Calculate metrics
+    const now = new Date();
+    const today = new Date().toDateString();
+    const overdue = pending.filter(t => t.dueDate && new Date(t.dueDate) < now);
+    const dueToday = pending.filter(t => {
+        if (!t.dueDate) return false;
+        return new Date(t.dueDate).toDateString() === today;
+    });
+    
+    const urgent = pending.filter(t => t.priority === 'urgent');
+    const completionRate = activeTasks.length > 0 ? Math.round((completed.length / activeTasks.length) * 100) : 0;
+    
+    // Calculate productivity score (0-100)
+    let productivityScore = 50; // Base score
+    if (overdue.length === 0) productivityScore += 15;
+    if (urgent.length === 0) productivityScore += 10;
+    if (completionRate > 70) productivityScore += 25;
+    else if (completionRate > 40) productivityScore += 15;
+    if (dueToday.length > 0 && dueToday.length <= 5) productivityScore += 10;
+    productivityScore = Math.min(100, productivityScore);
+    
+    const scoreClass = productivityScore >= 80 ? 'excellent' : productivityScore >= 60 ? 'good' : productivityScore >= 40 ? 'fair' : 'needs-improvement';
+    
+    // Top insight
+    const topInsight = insights[0] || {
+        type: 'info',
+        icon: 'fa-lightbulb',
+        message: 'All systems operational',
+        action: null,
+        actionLabel: null
+    };
+    
+    container.innerHTML = `
+        <div class="ai-dashboard-grid">
+            <div class="ai-metric-card productivity-score ${scoreClass}">
+                <div class="metric-icon">
+                    <i class="fas fa-tachometer-alt"></i>
+                </div>
+                <div class="metric-content">
+                    <div class="metric-value">${productivityScore}</div>
+                    <div class="metric-label">Productivity Score</div>
+                    <div class="metric-subtext">${scoreClass.replace('-', ' ')}</div>
+                </div>
+            </div>
+            
+            <div class="ai-metric-card ${overdue.length > 0 ? 'alert' : ''}">
+                <div class="metric-icon">
+                    <i class="fas fa-exclamation-circle"></i>
+                </div>
+                <div class="metric-content">
+                    <div class="metric-value">${overdue.length}</div>
+                    <div class="metric-label">Overdue</div>
+                    ${overdue.length > 0 ? '<div class="metric-subtext">needs attention</div>' : '<div class="metric-subtext">on track</div>'}
+                </div>
+            </div>
+            
+            <div class="ai-metric-card ${dueToday.length > 0 ? 'highlight' : ''}">
+                <div class="metric-icon">
+                    <i class="fas fa-calendar-day"></i>
+                </div>
+                <div class="metric-content">
+                    <div class="metric-value">${dueToday.length}</div>
+                    <div class="metric-label">Due Today</div>
+                    <div class="metric-subtext">${dueToday.length > 0 ? 'focus now' : 'clear day'}</div>
+                </div>
+            </div>
+            
+            <div class="ai-metric-card ${urgent.length > 0 ? 'urgent' : ''}">
+                <div class="metric-icon">
+                    <i class="fas fa-fire"></i>
+                </div>
+                <div class="metric-content">
+                    <div class="metric-value">${urgent.length}</div>
+                    <div class="metric-label">Urgent Tasks</div>
+                    <div class="metric-subtext">${urgent.length > 0 ? 'immediate action' : 'all good'}</div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="ai-insight-banner ${topInsight.type}">
+            <div class="insight-icon">
+                <i class="fas ${topInsight.icon}"></i>
+            </div>
+            <div class="insight-message">${topInsight.message}</div>
+            ${topInsight.action ? `
+                <button class="insight-action-btn" onclick="(${topInsight.action.toString()})()">
+                    ${topInsight.actionLabel}
+                </button>
+            ` : ''}
+        </div>
+        
+        ${insights.length > 1 ? `
+            <div class="ai-more-insights">
+                <button class="view-all-insights-btn" onclick="showAllInsights()">
+                    <i class="fas fa-brain"></i> View All ${insights.length} Insights
+                </button>
+            </div>
+        ` : ''}
+    `;
+}
+
+// *** NEW: Show all insights modal ***
+function showAllInsights() {
+    lastFocusedElement = document.activeElement;
+    const insights = generateEnhancedAIInsights(tasks);
+    
+    const content = `
+        <div class="all-insights-container">
+            ${insights.map(insight => `
+                <div class="insight-item ${insight.type}">
+                    <div class="insight-item-icon">
+                        <i class="fas ${insight.icon}"></i>
+                    </div>
+                    <div class="insight-item-content">
+                        <p>${insight.message}</p>
+                        ${insight.action ? `
+                            <button class="btn btn-sm btn-primary" onclick="closeInfoModal(); (${insight.action.toString()})();">
+                                ${insight.actionLabel}
+                            </button>
+                        ` : ''}
+                    </div>
+                </div>
+            `).join('')}
+        </div>
+    `;
+    
+    showInfoModal('<i class="fas fa-brain"></i> AI Insights & Recommendations', content);
+}
+
+// *** NEW: Quick Filters Panel ***
+function renderQuickFilters() {
+    const container = document.getElementById('quickFiltersPanel');
+    if (!container) return;
+    
+    const activeTasks = tasks.filter(t => !t.archived && !t.completed);
+    
+    // Get all unique tags
+    const allTags = new Set();
+    activeTasks.forEach(t => {
+        if (t.tags) t.tags.forEach(tag => allTags.add(tag));
+    });
+    
+    const hasActiveFilters = quickFilters.priorities.size > 0 || quickFilters.tags.size > 0 || quickFilters.dueDateRange;
+    
+    container.innerHTML = `
+        <div class="quick-filters-header">
+            <span><i class="fas fa-filter"></i> Quick Filters</span>
+            ${hasActiveFilters ? `
+                <button class="clear-filters-btn" onclick="clearQuickFilters()">
+                    <i class="fas fa-times"></i> Clear All
+                </button>
+            ` : ''}
+        </div>
+        
+        <div class="filter-section">
+            <div class="filter-label">Priority</div>
+            <div class="filter-chips">
+                ${['urgent', 'high', 'medium', 'low'].map(p => `
+                    <button class="filter-chip priority-${p} ${quickFilters.priorities.has(p) ? 'active' : ''}"
+                            onclick="togglePriorityFilter('${p}')">
+                        <i class="fas fa-flag"></i> ${capitalize(p)}
+                    </button>
+                `).join('')}
+            </div>
+        </div>
+        
+        ${allTags.size > 0 ? `
+            <div class="filter-section">
+                <div class="filter-label">Tags</div>
+                <div class="filter-chips">
+                    ${[...allTags].slice(0, 6).map(tag => `
+                        <button class="filter-chip ${quickFilters.tags.has(tag) ? 'active' : ''}"
+                                onclick="toggleTagFilter('${escapeHtml(tag)}')">
+                            #${escapeHtml(tag)}
+                        </button>
+                    `).join('')}
+                </div>
+            </div>
+        ` : ''}
+        
+        <div class="filter-section">
+            <div class="filter-label">Due Date</div>
+            <div class="filter-chips">
+                <button class="filter-chip ${quickFilters.dueDateRange === 'overdue' ? 'active' : ''}"
+                        onclick="toggleDueDateFilter('overdue')">
+                    <i class="fas fa-exclamation-circle"></i> Overdue
+                </button>
+                <button class="filter-chip ${quickFilters.dueDateRange === 'today' ? 'active' : ''}"
+                        onclick="toggleDueDateFilter('today')">
+                    <i class="fas fa-calendar-day"></i> Today
+                </button>
+                <button class="filter-chip ${quickFilters.dueDateRange === 'week' ? 'active' : ''}"
+                        onclick="toggleDueDateFilter('week')">
+                    <i class="fas fa-calendar-week"></i> This Week
+                </button>
+            </div>
+        </div>
+    `;
+}
+
+function togglePriorityFilter(priority) {
+    if (quickFilters.priorities.has(priority)) {
+        quickFilters.priorities.delete(priority);
+    } else {
+        quickFilters.priorities.add(priority);
+    }
+    applyQuickFilters();
+}
+
+function toggleTagFilter(tag) {
+    if (quickFilters.tags.has(tag)) {
+        quickFilters.tags.delete(tag);
+    } else {
+        quickFilters.tags.add(tag);
+    }
+    applyQuickFilters();
+}
+
+function toggleDueDateFilter(range) {
+    if (quickFilters.dueDateRange === range) {
+        quickFilters.dueDateRange = null;
+    } else {
+        quickFilters.dueDateRange = range;
+    }
+    applyQuickFilters();
+}
+
+function clearQuickFilters() {
+    quickFilters.priorities.clear();
+    quickFilters.tags.clear();
+    quickFilters.dueDateRange = null;
+    applyQuickFilters();
+}
+
+function applyQuickFilters() {
+    renderQuickFilters();
+    renderTasks();
+}
+
+// *** NEW: Focus Mode ***
+function toggleFocusMode() {
+    settings.focusMode = !settings.focusMode;
+    saveSettings();
+    
+    document.body.classList.toggle('focus-mode', settings.focusMode);
+    
+    const btn = document.getElementById('focusModeBtn');
+    if (btn) {
+        btn.innerHTML = settings.focusMode 
+            ? '<i class="fas fa-eye-slash"></i> Exit Focus' 
+            : '<i class="fas fa-bullseye"></i> Focus Mode';
+        btn.classList.toggle('active', settings.focusMode);
+    }
+    
+    renderTasks();
+    showToast(settings.focusMode ? 'Focus Mode ON - Showing only priority tasks' : 'Focus Mode OFF', 'info');
+}
+
+// *** NEW: Task Cloning ***
+function cloneTask(taskId) {
+    const task = tasks.find(t => t.id === taskId);
+    if (!task) return;
+    
+    const now = Date.now();
+    const clonedTask = {
+        ...task,
+        id: now.toString(),
+        title: task.title + ' (Copy)',
+        completed: false,
+        completedAt: null,
+        createdAt: new Date(now).toISOString(),
+        order: now,
+        previousInstanceId: null
+    };
+    
+    tasks.push(clonedTask);
+    saveTasks();
+    renderTasks();
+    showToast('Task cloned successfully', 'success');
+}
+
+// *** NEW: Archive Task ***
+async function archiveTask(taskId) {
+    const task = tasks.find(t => t.id === taskId);
+    if (!task) return;
+    
+    task.archived = true;
+    task.archivedAt = new Date().toISOString();
+    
+    await saveTasks();
+    renderTasks();
+    renderAIDashboard();
+    showToast('Task archived', 'success');
+}
+
+// *** NEW: Batch Edit ***
+function openBatchEdit() {
+    if (selectedTasks.size === 0) {
+        showToast('No tasks selected', 'info');
+        return;
+    }
+    
+    lastFocusedElement = document.activeElement;
+    
+    const content = `
+        <div class="batch-edit-form">
+            <p>Editing ${selectedTasks.size} selected task(s)</p>
+            
+            <div class="form-group">
+                <label>Change Category</label>
+                <select id="batchCategory" class="form-control">
+                    <option value="">-- No Change --</option>
+                    <option value="personal">Personal</option>
+                    <option value="office">Office</option>
+                    <option value="misc">Misc Work</option>
+                </select>
+            </div>
+            
+            <div class="form-group">
+                <label>Change Priority</label>
+                <select id="batchPriority" class="form-control">
+                    <option value="">-- No Change --</option>
+                    <option value="urgent">Urgent</option>
+                    <option value="high">High</option>
+                    <option value="medium">Medium</option>
+                    <option value="low">Low</option>
+                </select>
+            </div>
+            
+            <div class="form-group">
+                <label>Add Tag</label>
+                <input type="text" id="batchAddTag" class="form-control" placeholder="tag name">
+            </div>
+            
+            <div class="form-group">
+                <button class="btn btn-primary" onclick="applyBatchEdit()">
+                    <i class="fas fa-check"></i> Apply Changes
+                </button>
+                <button class="btn btn-secondary" onclick="closeInfoModal()">Cancel</button>
+            </div>
+        </div>
+    `;
+    
+    showInfoModal('<i class="fas fa-edit"></i> Batch Edit Tasks', content);
+}
+
+async function applyBatchEdit() {
+    const category = document.getElementById('batchCategory').value;
+    const priority = document.getElementById('batchPriority').value;
+    const addTag = document.getElementById('batchAddTag').value.trim();
+    
+    let changesCount = 0;
+    
+    selectedTasks.forEach(taskId => {
+        const task = tasks.find(t => t.id === taskId);
+        if (!task) return;
+        
+        if (category) {
+            task.category = category;
+            changesCount++;
+        }
+        if (priority) {
+            task.priority = priority;
+            changesCount++;
+        }
+        if (addTag && !task.tags.includes(addTag)) {
+            task.tags.push(addTag);
+            changesCount++;
+        }
+    });
+    
+    if (changesCount > 0) {
+        await saveTasks();
+        renderTasks();
+        renderAIDashboard();
+        closeInfoModal();
+        selectedTasks.clear();
+        showToast(`Updated ${selectedTasks.size} tasks`, 'success');
+    } else {
+        showToast('No changes applied', 'info');
+    }
+}
+
+// *** NEW: View Toggle (List/Matrix) ***
+function toggleView(view) {
+    currentView = view;
+    
+    document.querySelectorAll('.view-toggle-btn').forEach(btn => {
+        btn.classList.remove('active');
+    });
+    
+    const btn = document.querySelector(`[data-view="${view}"]`);
+    if (btn) btn.classList.add('active');
+    
+    renderTasks();
+}
+
+// *** NEW: Eisenhower Matrix View ***
+function renderEisenhowerMatrix() {
+    const container = document.getElementById('tasksContainer');
+    const activeTasks = getFilteredTasks();
+    
+    const matrix = {
+        urgentImportant: activeTasks.filter(t => !t.completed && (t.priority === 'urgent' || t.priority === 'high') && t.dueDate && getDueDateClass(t.dueDate) !== ''),
+        notUrgentImportant: activeTasks.filter(t => !t.completed && (t.priority === 'urgent' || t.priority === 'high') && (!t.dueDate || getDueDateClass(t.dueDate) === '')),
+        urgentNotImportant: activeTasks.filter(t => !t.completed && (t.priority === 'medium' || t.priority === 'low') && t.dueDate && getDueDateClass(t.dueDate) !== ''),
+        notUrgentNotImportant: activeTasks.filter(t => !t.completed && (t.priority === 'medium' || t.priority === 'low') && (!t.dueDate || getDueDateClass(t.dueDate) === ''))
+    };
+    
+    container.innerHTML = `
+        <div class="eisenhower-matrix">
+            <div class="matrix-quadrant urgent-important">
+                <div class="quadrant-header">
+                    <h3><i class="fas fa-fire"></i> Do First</h3>
+                    <span class="quadrant-subtitle">Urgent & Important</span>
+                </div>
+                <div class="quadrant-tasks">
+                    ${matrix.urgentImportant.map(t => renderMatrixTask(t)).join('') || '<p class="empty-quadrant">No tasks</p>'}
+                </div>
+            </div>
+            
+            <div class="matrix-quadrant not-urgent-important">
+                <div class="quadrant-header">
+                    <h3><i class="fas fa-calendar-alt"></i> Schedule</h3>
+                    <span class="quadrant-subtitle">Not Urgent but Important</span>
+                </div>
+                <div class="quadrant-tasks">
+                    ${matrix.notUrgentImportant.map(t => renderMatrixTask(t)).join('') || '<p class="empty-quadrant">No tasks</p>'}
+                </div>
+            </div>
+            
+            <div class="matrix-quadrant urgent-not-important">
+                <div class="quadrant-header">
+                    <h3><i class="fas fa-user-friends"></i> Delegate</h3>
+                    <span class="quadrant-subtitle">Urgent but Not Important</span>
+                </div>
+                <div class="quadrant-tasks">
+                    ${matrix.urgentNotImportant.map(t => renderMatrixTask(t)).join('') || '<p class="empty-quadrant">No tasks</p>'}
+                </div>
+            </div>
+            
+            <div class="matrix-quadrant not-urgent-not-important">
+                <div class="quadrant-header">
+                    <h3><i class="fas fa-trash-alt"></i> Eliminate</h3>
+                    <span class="quadrant-subtitle">Not Urgent & Not Important</span>
+                </div>
+                <div class="quadrant-tasks">
+                    ${matrix.notUrgentNotImportant.map(t => renderMatrixTask(t)).join('') || '<p class="empty-quadrant">No tasks</p>'}
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+function renderMatrixTask(task) {
+    return `
+        <div class="matrix-task" data-task-id="${task.id}">
+            <div class="matrix-task-header">
+                <input type="checkbox" class="task-checkbox" ${task.completed ? 'checked' : ''} 
+                       onchange="toggleTask('${task.id}')">
+                <span class="matrix-task-title">${escapeHtml(task.title)}</span>
+            </div>
+            ${task.dueDate ? `<div class="matrix-task-due">${formatDate(task.dueDate)}</div>` : ''}
+            <div class="matrix-task-actions">
+                <button class="task-btn-sm" onclick="editTask('${task.id}')" title="Edit">
+                    <i class="fas fa-edit"></i>
+                </button>
+            </div>
+        </div>
+    `;
+}
 
 // Initialize App
 document.addEventListener('DOMContentLoaded', async function() {
-    // *** UPDATED: Async initialization for DB ***
     try {
         await initDB();
         await loadSettings();
         await loadTasks();
+        loadCollapsedState();
         
         applyTheme();
         checkPinProtection();
         setupEventListeners();
         checkReminders();
+        renderAIDashboard(); // *** NEW
         renderAISummary();
+        renderQuickFilters(); // *** NEW
         
-        // *** NEW: Handle URL Hash for filters on page load ***
         handleHashChange();
         
-        // *** NEW: Handle PWA shortcut action ***
         const urlParams = new URLSearchParams(window.location.search);
         if (urlParams.get('action') === 'add-task') {
             openAdvancedForm();
-            // Clean up the URL so it doesn't trigger on refresh
             window.history.replaceState({}, document.title, window.location.pathname);
         }
         
-        // Check reminders every minute
         setInterval(checkReminders, 60000);
+        
+        // *** NEW: Update dashboard every minute ***
+        setInterval(() => {
+            renderAIDashboard();
+        }, 60000);
         
     } catch (error) {
         console.error("Failed to initialize the app:", error);
-        // Use custom modal instead of alert
         showInfoModal("Initialization Error", "Error loading app data. Please try refreshing the page.");
     }
 });
@@ -99,12 +844,13 @@ function setupEventListeners() {
         }
     });
 
-    document.querySelector('.ai-summary-header').addEventListener('click', toggleAISummary);
+    const aiSummaryHeader = document.querySelector('.ai-summary-header');
+    if (aiSummaryHeader) {
+        aiSummaryHeader.addEventListener('click', toggleAISummary);
+    }
     
-    // Listener for the sort dropdown
     document.getElementById('sortSelect').addEventListener('change', (e) => setSortOption(e.target.value));
     
-    // *** NEW: Search input listener ***
     const searchInput = document.getElementById('searchInput');
     const clearSearchBtn = document.getElementById('clearSearchBtn');
     if(searchInput) {
@@ -115,34 +861,26 @@ function setupEventListeners() {
         });
     }
     
-    // *** NEW: URL Hash change listener for filters ***
     window.addEventListener('hashchange', handleHashChange);
 }
 
-// *** NEW: Handle URL Hash Change ***
-/**
- * Reads the URL hash, updates the filter state, and re-renders the UI.
- */
 function handleHashChange() {
     let hash = window.location.hash.substring(1);
     if (!hash) {
-        hash = 'all'; // Default filter
+        hash = 'all';
     }
     
-    // Check if the filter is a valid one from our tabs
     const validFilters = ['all', 'personal', 'office', 'misc', 'recurring', 'completed'];
     if (validFilters.includes(hash)) {
         currentFilter = hash;
     } else {
         currentFilter = 'all';
-        window.location.hash = 'all'; // Correct an invalid hash
+        window.location.hash = 'all';
     }
     
-    // Update active tab UI
     const tabs = document.querySelectorAll('.tab');
     tabs.forEach(tab => tab.classList.remove('active'));
     
-    // Find the tab that corresponds to the current filter
     const tabToActive = [...tabs].find(tab => tab.onclick && tab.onclick.toString().includes(`'${currentFilter}'`));
     if (tabToActive) {
         tabToActive.classList.add('active');
@@ -151,7 +889,6 @@ function handleHashChange() {
     renderTasks();
 }
 
-// *** NEW: Clear search input ***
 function clearSearch() {
     const searchInput = document.getElementById('searchInput');
     if(searchInput) searchInput.value = '';
@@ -192,7 +929,7 @@ function togglePinSetting() {
         pinSettings.classList.add('hidden');
         settings.pinEnabled = false;
         settings.pin = null;
-        saveSettings(); // Async, but we don't need to wait
+        saveSettings();
     }
 }
 
@@ -223,7 +960,7 @@ async function savePinSettings() {
 function toggleDarkMode() {
     settings.theme = settings.theme === 'light' ? 'dark' : 'light';
     applyTheme();
-    saveSettings(); // Async, but we don't need to wait
+    saveSettings();
 }
 
 function applyTheme() {
@@ -234,12 +971,43 @@ function applyTheme() {
     }
 }
 
-// Task Management
+// Task Management - ENHANCED Quick Add
 async function quickAddTask() {
     const input = document.getElementById('quickTaskInput');
-    const title = input.value.trim();
+    let title = input.value.trim();
     
     if (!title) return;
+    
+    let category = settings.defaultCategory;
+    const categoryMatch = title.match(/@(personal|office|misc)/i);
+    if (categoryMatch) {
+        category = categoryMatch[1].toLowerCase();
+        title = title.replace(categoryMatch[0], '').trim();
+    }
+    
+    let priority = settings.defaultPriority;
+    const priorityMatch = title.match(/!(urgent|high|medium|low)/i);
+    if (priorityMatch) {
+        priority = priorityMatch[1].toLowerCase();
+        title = title.replace(priorityMatch[0], '').trim();
+    }
+    
+    const tags = [];
+    const tagMatches = title.matchAll(/#(\w+)/g);
+    for (const match of tagMatches) {
+        tags.push(match[1]);
+        title = title.replace(match[0], '').trim();
+    }
+    
+    // *** NEW: Parse time estimate (e.g., "30m" or "2h") ***
+    let estimatedMinutes = null;
+    const timeMatch = title.match(/(\d+)(m|h)/i);
+    if (timeMatch) {
+        const value = parseInt(timeMatch[1]);
+        const unit = timeMatch[2].toLowerCase();
+        estimatedMinutes = unit === 'h' ? value * 60 : value;
+        title = title.replace(timeMatch[0], '').trim();
+    }
     
     const now = Date.now();
     
@@ -247,52 +1015,60 @@ async function quickAddTask() {
         id: now.toString(),
         title: title,
         description: '',
-        category: settings.defaultCategory,
-        priority: settings.defaultPriority,
+        category: category,
+        priority: priority,
         dueDate: null,
         reminder: null,
         repeat: false,
         repeatFrequency: null,
-        tags: [],
+        tags: tags,
         completed: false,
         createdAt: new Date(now).toISOString(),
-        order: now, // *** NEW: For manual sorting
-        parentId: null // *** NEW: For subtasks
+        order: now,
+        parentId: null,
+        estimatedMinutes: estimatedMinutes, // *** NEW
+        archived: false // *** NEW
     };
     
     tasks.push(task);
-    await saveTasks(); // *** UPDATED: Await DB save
+    await saveTasks();
     renderTasks();
+    renderAIDashboard();
     renderAISummary(); 
     input.value = '';
-    showToast('Task added successfully', 'success');
+    
+    if (categoryMatch || priorityMatch || tags.length > 0 || timeMatch) {
+        showToast('Task added with parsed attributes!', 'success');
+    } else {
+        showToast('Task added! Try @category !priority #tag 30m', 'success');
+    }
 }
 
 function openAdvancedForm() {
-    // *** NEW: a11y focus management ***
     lastFocusedElement = document.activeElement;
     
     currentEditingTask = null;
     document.getElementById('modalTitle').textContent = 'Add New Task';
     document.getElementById('taskForm').reset();
     document.getElementById('taskId').value = '';
-    document.getElementById('taskParentId').value = ''; // *** NEW: Clear parent ID
+    document.getElementById('taskParentId').value = '';
     document.getElementById('taskCategory').value = settings.defaultCategory;
     document.getElementById('taskPriority').value = settings.defaultPriority;
+    
+    // *** NEW: Reset time estimate field ***
+    const estimateField = document.getElementById('taskEstimate');
+    if (estimateField) estimateField.value = '';
+    
     document.getElementById('taskModal').classList.remove('hidden');
     
-    // *** NEW: a11y focus ***
-    // Use setTimeout to ensure element is visible before focusing
     setTimeout(() => document.getElementById('taskTitle').focus(), 100);
 }
 
-// *** NEW: Open subtask form ***
 function openSubtaskForm(parentId) {
-    openAdvancedForm(); // Re-use the same modal
+    openAdvancedForm();
     document.getElementById('modalTitle').textContent = 'Add New Subtask';
     document.getElementById('taskParentId').value = parentId;
     
-    // Inherit category/priority from parent
     const parentTask = tasks.find(t => t.id === parentId);
     if (parentTask) {
         document.getElementById('taskCategory').value = parentTask.category;
@@ -304,7 +1080,6 @@ function closeTaskModal() {
     document.getElementById('taskModal').classList.add('hidden');
     currentEditingTask = null;
     
-    // *** NEW: a11y focus management ***
     if (lastFocusedElement) {
         try {
             lastFocusedElement.focus();
@@ -329,7 +1104,7 @@ async function saveTask(event) {
     event.preventDefault();
     
     const taskId = document.getElementById('taskId').value;
-    const parentId = document.getElementById('taskParentId').value || null; // *** NEW
+    const parentId = document.getElementById('taskParentId').value || null;
     const title = document.getElementById('taskTitle').value.trim();
     const description = document.getElementById('taskDescription').value.trim();
     const category = document.getElementById('taskCategory').value;
@@ -343,13 +1118,16 @@ async function saveTask(event) {
         .map(tag => tag.trim())
         .filter(tag => tag);
     
+    // *** NEW: Get time estimate ***
+    const estimateField = document.getElementById('taskEstimate');
+    const estimatedMinutes = estimateField ? parseInt(estimateField.value) || null : null;
+    
     if (!title) {
         showToast('Task title is required', 'error');
         return;
     }
 
     if (taskId) {
-        // Edit existing task
         const task = tasks.find(t => t.id === taskId);
         if (task) {
             task.title = title;
@@ -361,11 +1139,11 @@ async function saveTask(event) {
             task.repeat = repeat;
             task.repeatFrequency = repeatFrequency;
             task.tags = tags;
-            task.parentId = parentId; // Allow changing parent
+            task.parentId = parentId;
+            task.estimatedMinutes = estimatedMinutes; // *** NEW
         }
         showToast('Task updated successfully', 'success');
     } else {
-        // Create new task
         const now = Date.now();
         const task = {
             id: now.toString(),
@@ -380,15 +1158,18 @@ async function saveTask(event) {
             tags,
             completed: false,
             createdAt: new Date(now).toISOString(),
-            order: now, // *** NEW
-            parentId: parentId, // *** NEW
+            order: now,
+            parentId: parentId,
+            estimatedMinutes: estimatedMinutes, // *** NEW
+            archived: false // *** NEW
         };
         tasks.push(task);
         showToast('Task added successfully', 'success');
     }
     
-    await saveTasks(); // *** UPDATED: Await DB save
+    await saveTasks();
     renderTasks();
+    renderAIDashboard();
     renderAISummary(); 
     closeTaskModal();
 }
@@ -397,13 +1178,12 @@ function editTask(taskId) {
     const task = tasks.find(t => t.id === taskId);
     if (!task) return;
     
-    // *** NEW: a11y focus management ***
     lastFocusedElement = document.activeElement;
     
     currentEditingTask = task;
     document.getElementById('modalTitle').textContent = 'Edit Task';
     document.getElementById('taskId').value = task.id;
-    document.getElementById('taskParentId').value = task.parentId || ''; // *** NEW
+    document.getElementById('taskParentId').value = task.parentId || '';
     document.getElementById('taskTitle').value = task.title;
     document.getElementById('taskDescription').value = task.description || '';
     document.getElementById('taskCategory').value = task.category;
@@ -413,13 +1193,18 @@ function editTask(taskId) {
     document.getElementById('taskRepeat').checked = task.repeat;
     document.getElementById('taskTags').value = task.tags.join(', ');
     
+    // *** NEW: Set time estimate ***
+    const estimateField = document.getElementById('taskEstimate');
+    if (estimateField) {
+        estimateField.value = task.estimatedMinutes || '';
+    }
+    
     if (task.repeat) {
         document.getElementById('repeatOptions').classList.remove('hidden');
         document.getElementById('repeatFrequency').value = task.repeatFrequency || 'daily';
     }
     
     document.getElementById('taskModal').classList.remove('hidden');
-    // *** NEW: a11y focus ***
     setTimeout(() => document.getElementById('taskTitle').focus(), 100);
 }
 
@@ -427,20 +1212,18 @@ async function deleteTask(taskId) {
     const task = tasks.find(t => t.id === taskId);
     if (!task) return;
 
-    // Prevent deletion of a completed recurring task if its next instance exists
     const nextInstance = tasks.find(t => t.previousInstanceId === taskId);
     if (nextInstance) {
         showInfoModal('Deletion Blocked', 'Cannot delete this completed recurring task because its next instance has already been created. Please delete the pending instance first.');
         return;
     }
     
-    // *** NEW: Find all descendant tasks ***
     const tasksToDelete = [taskId];
     const findChildren = (parentId) => {
         const children = tasks.filter(t => t.parentId === parentId);
         children.forEach(child => {
             tasksToDelete.push(child.id);
-            findChildren(child.id); // Recurse
+            findChildren(child.id);
         });
     };
     findChildren(taskId);
@@ -451,12 +1234,12 @@ async function deleteTask(taskId) {
 
     showConfirmModal('Confirm Deletion', message, async () => {
         tasks = tasks.filter(t => !tasksToDelete.includes(t.id));
-        await saveTasks(); // *** UPDATED: Await DB save
+        await saveTasks();
         
-        // Clear selection
         tasksToDelete.forEach(id => selectedTasks.delete(id));
         
         renderTasks();
+        renderAIDashboard();
         renderAISummary(); 
         showToast('Task(s) deleted successfully', 'success');
     });
@@ -477,7 +1260,6 @@ function toggleSelectAll(event) {
     const isChecked = event.target.checked;
     const taskCheckboxes = document.querySelectorAll('.task-checkbox-multi');
     
-    // Get currently rendered (filtered) task IDs
     const currentTaskIds = Array.from(taskCheckboxes).map(cb => cb.value);
 
     taskCheckboxes.forEach(checkbox => {
@@ -495,9 +1277,7 @@ function toggleSelectAll(event) {
         }
     });
 
-    // Handle the case where the global Set might contain IDs from other filters.
     if (!isChecked) {
-        // If unchecking all, remove only the currently visible tasks from the global set
         currentTaskIds.forEach(id => selectedTasks.delete(id));
     }
     
@@ -510,16 +1290,14 @@ function deleteSelectedTasks() {
         return;
     }
     
-    // *** NEW: Expand selection to include all subtasks ***
     const finalTasksToDelete = new Set(selectedTasks);
     const findChildren = (parentId) => {
         const children = tasks.filter(t => t.parentId === parentId);
         children.forEach(child => {
             finalTasksToDelete.add(child.id);
-            findChildren(child.id); // Recurse
+            findChildren(child.id);
         });
     };
-    // Iterate over a copy of the set to avoid modification during iteration issues
     [...selectedTasks].forEach(taskId => findChildren(taskId));
     
     const count = finalTasksToDelete.size;
@@ -528,11 +1306,9 @@ function deleteSelectedTasks() {
         `Are you sure you want to delete ${count} selected task(s)?`;
 
     showConfirmModal('Confirm Bulk Deletion', message, async () => {
-        // Filter out all tasks whose IDs are in the finalTasksToDelete set
         const tasksToDeleteArr = Array.from(finalTasksToDelete);
         let nextInstanceCount = 0;
         
-        // Check for recurring task blocks
         const tasksToKeep = tasksToDeleteArr.filter(id => {
             const isCompletedRecurring = tasks.find(t => t.id === id && t.completed && t.repeat);
             const nextInstance = tasks.find(t => t.previousInstanceId === id);
@@ -548,15 +1324,17 @@ function deleteSelectedTasks() {
              const deletableTaskIds = tasksToDeleteArr.filter(id => !tasksToKeep.includes(id));
              tasks = tasks.filter(t => !deletableTaskIds.includes(t.id));
              selectedTasks = new Set();
-             await saveTasks(); // *** UPDATED
+             await saveTasks();
              renderTasks();
+             renderAIDashboard();
              return;
         }
 
         tasks = tasks.filter(t => !finalTasksToDelete.has(t.id));
         selectedTasks = new Set();
-        await saveTasks(); // *** UPDATED
+        await saveTasks();
         renderTasks();
+        renderAIDashboard();
         renderAISummary();
         showToast('Selected tasks deleted successfully', 'success');
     });
@@ -566,8 +1344,9 @@ async function clearAllTasks() {
     showConfirmModal('Confirm Clear All', 'Are you sure you want to delete ALL tasks permanently? This cannot be undone.', async () => {
         tasks = [];
         selectedTasks = new Set();
-        await saveTasks(); // *** UPDATED
+        await saveTasks();
         renderTasks();
+        renderAIDashboard();
         renderAISummary();
         closeSettingsModal();
         showToast('All tasks cleared successfully', 'success');
@@ -583,7 +1362,12 @@ function updateBulkActionUI() {
         btn.disabled = count === 0;
     }
     
-    // Check if the "Select All" checkbox should be indeterminate/checked
+    // *** NEW: Show batch edit button ***
+    const batchEditBtn = document.getElementById('batchEditBtn');
+    if (batchEditBtn) {
+        batchEditBtn.style.display = count > 0 ? 'inline-block' : 'none';
+    }
+    
     const visibleTasksCount = document.querySelectorAll('.task-checkbox-multi').length;
     const selectAllCheckbox = document.getElementById('selectAllCheckbox');
     
@@ -598,7 +1382,6 @@ function updateBulkActionUI() {
             selectAllCheckbox.checked = false;
             selectAllCheckbox.indeterminate = false;
         } else {
-             // count > 0 and visibleTasksCount === 0 (or some other edge case)
             selectAllCheckbox.checked = false;
             selectAllCheckbox.indeterminate = selectedTasks.size > 0;
         }
@@ -622,8 +1405,7 @@ async function toggleTask(taskId) {
             newTask.completedAt = null;
             newTask.createdAt = new Date().toISOString();
             newTask.previousInstanceId = task.id; 
-            newTask.order = Date.now(); // Give it a new order
-            // Note: We keep the parentId if it was a recurring subtask
+            newTask.order = Date.now();
 
             if (task.dueDate) {
                 const nextDate = new Date(task.dueDate);
@@ -662,32 +1444,27 @@ async function toggleTask(taskId) {
         }
     }
     
-    await saveTasks(); // *** UPDATED: Await DB save
+    await saveTasks();
     renderTasks();
+    renderAIDashboard();
     renderAISummary(); 
 }
 
-// Update Filter Logic
 function filterTasks(filter) {
-    // *** UPDATED: Set URL Hash, which triggers handleHashChange() ***
     window.location.hash = filter;
 }
 
-// NEW: Sort Logic
 function setSortOption(sortKey) {
     currentSort = sortKey;
-    document.getElementById('sortSelect').value = currentSort; // Ensure UI consistency
+    document.getElementById('sortSelect').value = currentSort;
     renderTasks();
 }
 
-// *** MAJORLY UPDATED: renderTasks for Search, Subtasks, and Drag/Drop ***
-function renderTasks() {
-    const container = document.getElementById('tasksContainer');
-    const bulkActionsContainer = document.getElementById('bulkActionsContainer');
+// *** ENHANCED: Get filtered tasks with quick filters and focus mode ***
+function getFilteredTasks() {
+    let processedTasks = tasks.filter(t => !t.archived || settings.showArchived);
     
-    let processedTasks = tasks;
-    
-    // 1. Apply Search Filter
+    // Apply search
     let searchedTaskIds = new Set();
     if (currentSearch) {
         const searchMatches = processedTasks.filter(t => 
@@ -696,7 +1473,6 @@ function renderTasks() {
             (t.tags && t.tags.some(tag => tag.toLowerCase().includes(currentSearch)))
         );
         
-        // If a task matches, we need to show it *and* all its parents
         const getParentIds = (task) => {
             let ids = new Set();
             let current = task;
@@ -716,10 +1492,9 @@ function renderTasks() {
         processedTasks = processedTasks.filter(t => searchedTaskIds.has(t.id));
     }
     
-    // 2. Apply Tab Filter (e.g., 'all', 'personal', 'completed')
+    // Apply tab filter
     let filteredTasks = [];
     if (currentSearch) {
-        // If searching, just use the search results
         filteredTasks = processedTasks;
     } else if (currentFilter === 'all') {
         filteredTasks = processedTasks;
@@ -728,32 +1503,103 @@ function renderTasks() {
     } else if (currentFilter === 'recurring') {
         filteredTasks = processedTasks.filter(t => !t.completed && t.repeat);
     } else {
-        // Category filters (show pending, non-recurring)
         filteredTasks = processedTasks.filter(t => 
             !t.completed && 
             !t.repeat && 
             t.category === currentFilter
         );
     }
+    
+    // *** NEW: Apply quick filters ***
+    if (quickFilters.priorities.size > 0) {
+        filteredTasks = filteredTasks.filter(t => quickFilters.priorities.has(t.priority));
+    }
+    
+    if (quickFilters.tags.size > 0) {
+        filteredTasks = filteredTasks.filter(t => 
+            t.tags && t.tags.some(tag => quickFilters.tags.has(tag))
+        );
+    }
+    
+    if (quickFilters.dueDateRange) {
+        const now = new Date();
+        const today = new Date().toDateString();
+        const weekEnd = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+        
+        filteredTasks = filteredTasks.filter(t => {
+            if (!t.dueDate) return false;
+            const due = new Date(t.dueDate);
+            
+            if (quickFilters.dueDateRange === 'overdue') {
+                return due < now && !t.completed;
+            } else if (quickFilters.dueDateRange === 'today') {
+                return due.toDateString() === today && !t.completed;
+            } else if (quickFilters.dueDateRange === 'week') {
+                return due >= now && due <= weekEnd && !t.completed;
+            }
+            return true;
+        });
+    }
+    
+    // *** NEW: Apply focus mode ***
+    if (settings.focusMode) {
+        const now = new Date();
+        const today = new Date().toDateString();
+        
+        filteredTasks = filteredTasks.filter(t => {
+            if (t.completed) return false;
+            
+            // Show if urgent/high priority
+            if (t.priority === 'urgent' || t.priority === 'high') return true;
+            
+            // Show if due today or overdue
+            if (t.dueDate) {
+                const due = new Date(t.dueDate);
+                if (due.toDateString() === today || due < now) return true;
+            }
+            
+            return false;
+        });
+    }
+    
+    return filteredTasks;
+}
 
-    // 3. Build Task Tree (for subtasks)
+// *** ENHANCED: renderTasks ***
+function renderTasks() {
+    const container = document.getElementById('tasksContainer');
+    const bulkActionsContainer = document.getElementById('bulkActionsContainer');
+    
+    // *** NEW: Check view mode ***
+    if (currentView === 'matrix') {
+        renderEisenhowerMatrix();
+        bulkActionsContainer.classList.add('hidden');
+        return;
+    }
+    
+    const filteredTasks = getFilteredTasks();
+
+    // Build task tree
     const taskMap = new Map(filteredTasks.map(task => [task.id, { ...task, children: [] }]));
     const taskTree = [];
     
     for (const task of taskMap.values()) {
         if (task.parentId && taskMap.has(task.parentId)) {
-            // This is a subtask, add it to its parent's children array
             taskMap.get(task.parentId).children.push(task);
         } else {
-            // This is a top-level task (or its parent is filtered out)
             taskTree.push(task);
         }
     }
     
-    // 4. Apply Sort
-    const sortTasks = (taskList) => {
+    // Sort with completed last
+    const sortTasksWithCompletedLast = (taskList) => {
+        const priorityOrder = { urgent: 0, high: 1, medium: 2, low: 3 };
+        
         taskList.sort((a, b) => {
-            const priorityOrder = { urgent: 0, high: 1, medium: 2, low: 3 };
+            if (a.completed !== b.completed) {
+                return a.completed ? 1 : -1;
+            }
+            
             let comparison = 0;
 
             switch (currentSort) {
@@ -771,27 +1617,26 @@ function renderTasks() {
                 case 'order':
                     comparison = (a.order || 0) - (b.order || 0);
                     break;
-                case 'creationDate': // Fallback for existing sort option
-                    comparison = new Date(b.createdAt) - new Date(a.createdAt); // Newest first
+                case 'creationDate':
+                    comparison = new Date(b.createdAt) - new Date(a.createdAt);
                     break;
             }
-            // Fallback sort: if comparison is 0, use manual order
+            
             if (comparison !== 0) return comparison;
             return (a.order || 0) - (b.order || 0);
         });
         
-        // Recursively sort children
         taskList.forEach(task => {
-            if (task.children.length > 0) {
-                sortTasks(task.children);
+            if (task.children && task.children.length > 0) {
+                sortTasksWithCompletedLast(task.children);
             }
         });
     };
     
-    sortTasks(taskTree);
+    sortTasksWithCompletedLast(taskTree);
 
-    // 5. Render Bulk Actions UI
-    if (filteredTasks.length > 0) { // Base this on total filtered tasks, not just top level
+    // Render bulk actions
+    if (filteredTasks.length > 0) {
         bulkActionsContainer.classList.remove('hidden');
         bulkActionsContainer.querySelector('#selectAllCheckbox').checked = false;
         bulkActionsContainer.querySelector('#selectAllCheckbox').indeterminate = false;
@@ -801,12 +1646,15 @@ function renderTasks() {
         selectedTasks.clear();
     }
     
-    // 6. Render HTML
+    // Render HTML
     if (taskTree.length === 0) {
         let message = "No tasks found";
         let subMessage = "Add a new task to get started!";
         
-        if (currentSearch) {
+        if (settings.focusMode) {
+            message = "No priority tasks";
+            subMessage = "All caught up! Turn off Focus Mode to see all tasks.";
+        } else if (currentSearch) {
              message = "No tasks match your search";
              subMessage = "Try searching for a different term.";
         } else {
@@ -836,25 +1684,39 @@ function renderTasks() {
                 <p>${subMessage}</p>
             </div>
         `;
+        updateTabBadges();
         return;
     }
     
-    // *** NEW: Recursive render function ***
+    // Render tasks
     const renderTaskHTML = (task, level) => {
-        // Limit nesting visualization
         const displayLevel = Math.min(level, 3);
         const subtaskClass = displayLevel > 0 ? `subtask subtask-level-${displayLevel}` : '';
-        // Disable drag/drop if sorting is not manual, if searching, or if it's a subtask
         const draggable = (currentSort === 'order' && !currentSearch && displayLevel === 0) ? 'true' : 'false';
         
-        return `
-        <div class="task-card ${task.completed ? 'completed' : ''} ${subtaskClass}" 
+        const hasChildren = task.children && task.children.length > 0;
+        const isCollapsed = collapsedTasks.has(task.id);
+        
+        const stats = getSubtaskStats(task.id);
+        const dueDateClass = getDueDateClass(task.dueDate);
+        
+        let taskHTML = `
+        <div class="task-card ${task.completed ? 'completed' : ''} ${subtaskClass} ${dueDateClass}" 
              data-task-id="${task.id}" 
              draggable="${draggable}"
              ondragstart="handleDragStart(event)">
             
             <div class="task-header">
                 <div class="task-title-section">
+                    ${hasChildren ? `
+                    <button class="collapse-btn" 
+                            onclick="toggleCollapseTask('${task.id}', event)" 
+                            title="${isCollapsed ? 'Expand' : 'Collapse'} subtasks"
+                            aria-label="${isCollapsed ? 'Expand' : 'Collapse'} subtasks">
+                        <i class="fas fa-chevron-${isCollapsed ? 'right' : 'down'}"></i>
+                    </button>
+                    ` : '<span class="collapse-spacer"></span>'}
+                    
                     <input type="checkbox" 
                            class="task-checkbox-multi" 
                            value="${task.id}"
@@ -867,19 +1729,35 @@ function renderTasks() {
                            onchange="toggleTask('${task.id}')">
                            
                     <div>
-                        <div class="task-title">${escapeHtml(task.title)}</div>
+                        <div class="task-title">
+                            ${escapeHtml(task.title)}
+                            ${stats ? `<span class="subtask-progress" title="Subtask Progress">(${stats.completed}/${stats.total})</span>` : ''}
+                            ${task.estimatedMinutes ? `<span class="time-estimate" title="Estimated Time"><i class="fas fa-clock"></i> ${formatMinutes(task.estimatedMinutes)}</span>` : ''}
+                        </div>
+                        ${stats ? `
+                        <div class="subtask-progress-bar">
+                            <div class="subtask-progress-fill" style="width: ${stats.percentage}%"></div>
+                        </div>
+                        ` : ''}
                     </div>
                 </div>
                 <div class="task-actions">
-                    <!-- *** NEW: Add Subtask Button (limit nesting) *** -->
-                    ${displayLevel < 3 ? `
+                    ${displayLevel < 3 && !task.completed ? `
                     <button class="task-btn" onclick="openSubtaskForm('${task.id}')" title="Add Subtask" aria-label="Add Subtask">
                         <i class="fas fa-plus-circle"></i>
                     </button>
                     ` : ''}
+                    <button class="task-btn" onclick="cloneTask('${task.id}')" title="Clone Task" aria-label="Clone Task">
+                        <i class="fas fa-copy"></i>
+                    </button>
                     <button class="task-btn" onclick="editTask('${task.id}')" title="Edit" aria-label="Edit Task">
                         <i class="fas fa-edit"></i>
                     </button>
+                    ${task.completed ? `
+                    <button class="task-btn" onclick="archiveTask('${task.id}')" title="Archive" aria-label="Archive Task">
+                        <i class="fas fa-archive"></i>
+                    </button>
+                    ` : ''}
                     <button class="task-btn" onclick="deleteTask('${task.id}')" title="Delete" aria-label="Delete Task">
                         <i class="fas fa-trash"></i>
                     </button>
@@ -896,8 +1774,9 @@ function renderTasks() {
                     <i class="fas fa-flag"></i> ${capitalize(task.priority)}
                 </span>
                 ${task.dueDate ? `
-                    <span class="task-badge badge-date">
-                        <i class="fas fa-calendar"></i> ${formatDate(task.dueDate)}
+                    <span class="task-badge badge-date ${dueDateClass}">
+                        <i class="fas fa-calendar${dueDateClass === 'overdue' ? '-times' : ''}"></i> 
+                        ${formatDate(task.dueDate)}
                     </span>
                 ` : ''}
                 ${task.repeat ? `
@@ -909,44 +1788,52 @@ function renderTasks() {
             
             ${task.tags.length > 0 ? `
                 <div class="task-tags">
-                    ${task.tags.map(tag => `<span class="tag">#${escapeHtml(tag)}</span>`).join('')}
+                    ${task.tags.map(tag => `<span class="tag" onclick="quickFilterByTag('${escapeHtml(tag)}')">#${escapeHtml(tag)}</span>`).join('')}
                 </div>
             ` : ''}
         </div>
-        
-        <!-- *** NEW: Render children tasks recursively *** -->
-        ${task.children.map(child => renderTaskHTML(child, level + 1)).join('')}
         `;
+        
+        if (hasChildren && !isCollapsed) {
+            taskHTML += task.children.map(child => renderTaskHTML(child, level + 1)).join('');
+        }
+        
+        return taskHTML;
     };
     
     container.innerHTML = taskTree.map(task => renderTaskHTML(task, 0)).join('');
 
     updateBulkActionUI();
+    updateTabBadges();
 }
 
-// *** NEW: Drag and Drop Handlers ***
+// *** NEW: Quick filter by clicking tag ***
+function quickFilterByTag(tag) {
+    quickFilters.tags.clear();
+    quickFilters.tags.add(tag);
+    applyQuickFilters();
+}
+
+// Drag and Drop
 function handleDragStart(event) {
     const taskCard = event.target.closest('.task-card');
-    // Check if the element is actually draggable
     if (taskCard.draggable) {
         event.dataTransfer.setData('text/plain', taskCard.dataset.taskId);
         event.dataTransfer.effectAllowed = 'move';
-        // Add a slight delay so the browser can capture the drag image
         setTimeout(() => {
             taskCard.classList.add('dragging');
         }, 0);
     } else {
-        event.preventDefault(); // Don't allow drag
+        event.preventDefault();
     }
 }
 
 function handleDragOver(event) {
-    // Only allow dropping on the container or on other draggable (top-level) tasks
     const taskCard = event.target.closest('.task-card[draggable="true"]');
     const container = event.target.closest('.tasks-container');
     
     if (taskCard || container) {
-        event.preventDefault(); // Necessary to allow drop
+        event.preventDefault();
         event.dataTransfer.dropEffect = 'move';
     }
 }
@@ -956,7 +1843,6 @@ async function handleDrop(event) {
     const draggedId = event.dataTransfer.getData('text/plain');
     const draggedTask = tasks.find(t => t.id === draggedId);
     
-    // Clean up dragging class
     const draggingElement = document.querySelector('.task-card.dragging');
     if (draggingElement) {
         draggingElement.classList.remove('dragging');
@@ -964,52 +1850,42 @@ async function handleDrop(event) {
 
     if (!draggedTask) return;
     
-    // Find the card we are dropping *on* or *before*
     const targetCard = event.target.closest('.task-card[draggable="true"]');
-    let targetOrder = Date.now(); // Default to last if dropped in empty space
+    let targetOrder = Date.now();
     
-    // Get the current list of top-level tasks, sorted by order
     const topLevelTasks = tasks
         .filter(t => !t.parentId)
         .sort((a, b) => (a.order || 0) - (b.order || 0));
     
     if (targetCard) {
         const targetId = targetCard.dataset.taskId;
-        if (targetId === draggedId) return; // Dropped on itself
+        if (targetId === draggedId) return;
         
         const targetTask = tasks.find(t => t.id === targetId);
         if (!targetTask) return;
         
         const targetIndex = topLevelTasks.findIndex(t => t.id === targetId);
         
-        // Check if we're dropping in the top half or bottom half of the target card
         const rect = targetCard.getBoundingClientRect();
         const isBefore = event.clientY < rect.top + rect.height / 2;
 
         if (isBefore) {
-            // Drop *before* the target card
             if (targetIndex === 0) {
-                // Dropped before the first item
-                targetOrder = (targetTask.order || 0) - 1000; // Place it before
+                targetOrder = (targetTask.order || 0) - 1000;
             } else {
-                // Dropped between target and previous
                 const prevTask = topLevelTasks[targetIndex - 1];
                 targetOrder = ((prevTask.order || 0) + (targetTask.order || 0)) / 2;
             }
         } else {
-            // Drop *after* the target card
             if (targetIndex === topLevelTasks.length - 1) {
-                // Dropped after the last item
-                targetOrder = (targetTask.order || 0) + 1000; // Place it after
+                targetOrder = (targetTask.order || 0) + 1000;
             } else {
-                // Dropped between target and next
                 const nextTask = topLevelTasks[targetIndex + 1];
                 targetOrder = ((targetTask.order || 0) + (nextTask.order || 0)) / 2;
             }
         }
         
     } else {
-        // Dropped in empty space, put at the end
         if(topLevelTasks.length > 0) {
             const maxOrder = topLevelTasks[topLevelTasks.length - 1].order || 0;
             targetOrder = maxOrder + 1000;
@@ -1018,12 +1894,10 @@ async function handleDrop(event) {
     
     draggedTask.order = targetOrder;
     
-    // Set sort to manual, save, and re-render
-    setSortOption('order'); // This will call renderTasks
+    setSortOption('order');
     await saveTasks();
     renderTasks();
 }
-
 
 // Reminders
 function checkReminders() {
@@ -1034,11 +1908,7 @@ function checkReminders() {
             const reminderTime = new Date(task.reminder);
             const timeDiff = reminderTime.getTime() - now.getTime();
             
-            // Check if reminder is due within the next minute
             if (timeDiff > 0 && timeDiff <= 60 * 1000) {
-                // Use IndexedDB to check if notified, or fall back to localStorage
-                // For simplicity, we'll stick to localStorage for notification state
-                // as it's non-critical, ephemeral data.
                 const notified = localStorage.getItem(`notified_${task.id}`);
                 if (notified !== task.reminder) {
                     showNotification(task);
@@ -1053,8 +1923,8 @@ function showNotification(task) {
     if ('Notification' in window && Notification.permission === 'granted') {
         const options = {
             body: `Due: ${formatDate(task.dueDate) || 'No due date'}`,
-            icon: 'android-chrome-192x192.png', // Use app icon
-            badge: 'android-chrome-192x192.png' // Use app icon
+            icon: 'android-chrome-192x192.png',
+            badge: 'android-chrome-192x192.png'
         };
         
         navigator.serviceWorker.ready.then(registration => {
@@ -1065,12 +1935,12 @@ function showNotification(task) {
     }
 }
 
-// AI INSIGHTS FUNCTIONS
+// AI INSIGHTS (Legacy function for old summary panel)
 function renderAISummary() {
-    const insights = generateAIInsights(tasks);
+    const insights = generateEnhancedAIInsights(tasks);
     const container = document.getElementById('aiSummaryContent');
     
-    if (!container) return; // Guard against missing element
+    if (!container) return;
     
     if (insights.length === 0 || tasks.length === 0) {
         container.innerHTML = '<p class="ai-summary-item"><i class="fas fa-lightbulb"></i> Start adding tasks to get personalized insights.</p>';
@@ -1078,9 +1948,9 @@ function renderAISummary() {
     }
     
     container.innerHTML = insights.slice(0, 3).map(insight => `
-        <p class="ai-summary-item">
-            <i class="fas fa-lightbulb"></i>
-            ${insight}
+        <p class="ai-summary-item ${insight.type}">
+            <i class="fas ${insight.icon}"></i>
+            ${insight.message}
         </p>
     `).join('');
 }
@@ -1103,16 +1973,17 @@ function toggleAISummary() {
     }
 }
 
+// *** ENHANCED: showInsights with more metrics ***
 function showInsights() {
-    // *** NEW: a11y focus management ***
     lastFocusedElement = document.activeElement;
     
-    const total = tasks.length;
-    const completed = tasks.filter(t => t.completed).length;
+    const activeTasks = tasks.filter(t => !t.archived);
+    const total = activeTasks.length;
+    const completed = activeTasks.filter(t => t.completed).length;
     const pending = total - completed;
     const completionRate = total > 0 ? Math.round((completed / total) * 100) : 0;
     
-    const pendingTasks = tasks.filter(t => !t.completed);
+    const pendingTasks = activeTasks.filter(t => !t.completed);
     
     const byCategory = {
         personal: pendingTasks.filter(t => t.category === 'personal').length,
@@ -1127,9 +1998,10 @@ function showInsights() {
         low: pendingTasks.filter(t => t.priority === 'low').length
     };
     
+    const now = new Date();
     const overdue = pendingTasks.filter(t => {
         if (!t.dueDate) return false;
-        return new Date(t.dueDate) < new Date();
+        return new Date(t.dueDate) < now;
     });
     
     const today = new Date().toDateString();
@@ -1138,7 +2010,29 @@ function showInsights() {
         return new Date(t.dueDate).toDateString() === today;
     });
     
-    const insights = generateAIInsights(tasks);
+    // *** NEW: Calculate productivity metrics ***
+    const last7Days = completed.filter(t => {
+        if (!t.completedAt) return false;
+        const completedDate = new Date(t.completedAt);
+        const daysDiff = (now - completedDate) / (1000 * 60 * 60 * 24);
+        return daysDiff <= 7;
+    });
+    
+    const last30Days = completed.filter(t => {
+        if (!t.completedAt) return false;
+        const completedDate = new Date(t.completedAt);
+        const daysDiff = (now - completedDate) / (1000 * 60 * 60 * 24);
+        return daysDiff <= 30;
+    });
+    
+    const avgPerWeek = last30Days.length > 0 ? Math.round((last30Days.length / 30) * 7 * 10) / 10 : 0;
+    
+    // Time estimates
+    const withEstimates = pendingTasks.filter(t => t.estimatedMinutes);
+    const totalEstimatedMinutes = withEstimates.reduce((sum, t) => sum + (t.estimatedMinutes || 0), 0);
+    const totalEstimatedHours = Math.round(totalEstimatedMinutes / 60 * 10) / 10;
+    
+    const insights = generateEnhancedAIInsights(tasks);
     
     const content = `
         <div class="insight-card">
@@ -1165,6 +2059,30 @@ function showInsights() {
             <h4 style="margin-top: 1.5rem;">Overall Progress</h4>
             <div class="progress-bar">
                 <div class="progress-fill" style="width: ${completionRate}%"></div>
+            </div>
+        </div>
+        
+        <div class="insight-card">
+            <h3><i class="fas fa-chart-line"></i> Productivity Trends</h3>
+            <div class="stat-grid">
+                <div class="stat-item">
+                    <div class="stat-value">${last7Days.length}</div>
+                    <div class="stat-label">Last 7 Days</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-value">${last30Days.length}</div>
+                    <div class="stat-label">Last 30 Days</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-value">${avgPerWeek}</div>
+                    <div class="stat-label">Avg/Week</div>
+                </div>
+                ${totalEstimatedMinutes > 0 ? `
+                <div class="stat-item">
+                    <div class="stat-value">${totalEstimatedHours}h</div>
+                    <div class="stat-label">Est. Work Left</div>
+                </div>
+                ` : ''}
             </div>
         </div>
         
@@ -1223,11 +2141,16 @@ function showInsights() {
         </div>
         
         <div class="insight-card">
-            <h3><i class="fas fa-brain"></i> All AI Insights</h3>
+            <h3><i class="fas fa-brain"></i> AI Insights & Recommendations</h3>
             ${insights.map(insight => `
-                <p class="ai-summary-item" style="margin: 0.75rem 0;">
-                    <i class="fas fa-lightbulb"></i>
-                    ${insight}
+                <p class="ai-summary-item ${insight.type}" style="margin: 0.75rem 0;">
+                    <i class="fas ${insight.icon}"></i>
+                    ${insight.message}
+                    ${insight.action ? `
+                        <button class="btn btn-sm btn-primary" onclick="closeInsightsModal(); (${insight.action.toString()})();" style="margin-left: 0.5rem;">
+                            ${insight.actionLabel}
+                        </button>
+                    ` : ''}
                 </p>
             `).join('')}
         </div>
@@ -1236,73 +2159,16 @@ function showInsights() {
     document.getElementById('insightsContent').innerHTML = content;
     document.getElementById('insightsModal').classList.remove('hidden');
     
-    // *** NEW: a11y focus ***
     setTimeout(() => document.getElementById('insightsModal').querySelector('.close-btn').focus(), 100);
 }
 
 function generateAIInsights(tasks) {
-    const insights = [];
-    
-    const pending = tasks.filter(t => !t.completed);
-    const urgent = pending.filter(t => t.priority === 'urgent');
-    const high = pending.filter(t => t.priority === 'high');
-    
-    if (urgent.length > 0) {
-        insights.push(`You have ${urgent.length} urgent task${urgent.length > 1 ? 's' : ''} that need${urgent.length === 1 ? 's' : ''} immediate attention.`);
-    }
-    
-    if (high.length > 3) {
-        insights.push(`You have ${high.length} high-priority tasks. Consider breaking them down into smaller, manageable chunks.`);
-    }
-    
-    const overdue = pending.filter(t => t.dueDate && new Date(t.dueDate) < new Date());
-    if (overdue.length > 0) {
-        insights.push(`${overdue.length} task${overdue.length > 1 ? 's are' : ' is'} overdue. Prioritize completing ${overdue.length > 1 ? 'these' : 'this'} first.`);
-    }
-    
-    const today = new Date();
-    // Fix: This was creating a date at midnight UTC, not local
-    const thisWeekStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-    const thisWeekEnd = new Date(thisWeekStart.getTime() + 7 * 24 * 60 * 60 * 1000);
-    
-    const thisWeek = pending.filter(t => {
-        if (!t.dueDate) return false;
-        const dueDate = new Date(t.dueDate);
-        return dueDate >= thisWeekStart && dueDate < thisWeekEnd;
-    });
-    
-    if (thisWeek.length > 0) {
-        insights.push(`You have ${thisWeek.length} task${thisWeek.length > 1 ? 's' : ''} due this week. Plan your time accordingly.`);
-    }
-    
-    const completed = tasks.filter(t => t.completed);
-    if (tasks.length > 0) {
-        const completionRate = Math.round((completed.length / tasks.length) * 100);
-        if (completed.length > 0) {
-            if (completionRate >= 70) {
-                insights.push(`Great job! You've completed ${completionRate}% of your tasks. Keep up the excellent work!`);
-            } else if (completionRate >= 40) {
-                insights.push(`You're making progress with a ${completionRate}% completion rate. Keep going!`);
-            } else {
-                insights.push(`Your completion rate is ${completionRate}%. Focus on completing a few tasks each day to improve.`);
-            }
-        }
-    }
-    
-    if (pending.length === 0 && tasks.length > 0) {
-        insights.push(`Amazing! You have no pending tasks. Enjoy your free time or plan ahead for upcoming projects.`);
-    }
-    
-    if (insights.length === 0 && tasks.length > 0) {
-        insights.push('Your task list is looking manageable. Keep up the good work!');
-    }
-    
-    return insights;
+    // Wrapper for enhanced insights
+    return generateEnhancedAIInsights(tasks);
 }
 
 function closeInsightsModal() {
     document.getElementById('insightsModal').classList.add('hidden');
-    // *** NEW: a11y focus management ***
     if (lastFocusedElement) {
         try { lastFocusedElement.focus(); } catch(e) {}
     }
@@ -1310,7 +2176,6 @@ function closeInsightsModal() {
 
 // Settings
 function openSettings() {
-    // *** NEW: a11y focus management ***
     lastFocusedElement = document.activeElement;
     
     document.getElementById('defaultCategory').value = settings.defaultCategory;
@@ -1324,13 +2189,11 @@ function openSettings() {
     
     document.getElementById('settingsModal').classList.remove('hidden');
     
-    // *** NEW: a11y focus ***
     setTimeout(() => document.getElementById('settingsModal').querySelector('.close-btn').focus(), 100);
 }
 
 function closeSettingsModal() {
     document.getElementById('settingsModal').classList.add('hidden');
-    // *** NEW: a11y focus management ***
     if (lastFocusedElement) {
         try { lastFocusedElement.focus(); } catch(e) {}
     }
@@ -1341,7 +2204,6 @@ async function saveSettings() {
     settings.defaultPriority = document.getElementById('defaultPriority').value;
     settings.defaultReminderHours = parseInt(document.getElementById('defaultReminderHours').value);
     
-    // *** UPDATED: Save to IndexedDB ***
     try {
         await db.put(SETTINGS_STORE, settings);
         showToast('Settings saved successfully', 'success');
@@ -1352,16 +2214,14 @@ async function saveSettings() {
 }
 
 async function loadSettings() {
-    // *** UPDATED: Load from IndexedDB ***
     let saved = await db.get(SETTINGS_STORE, 'main-settings');
     if (saved) {
         settings = { ...settings, ...saved };
     } else {
-        // First load, save default settings
         await db.put(SETTINGS_STORE, settings);
     }
 }
-
+ 
 // Import/Export
 function getTimestampedFilename(baseName, extension) {
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
@@ -1371,7 +2231,7 @@ function getTimestampedFilename(baseName, extension) {
 function exportToJSON() {
     const exportData = {
         exportedAt: new Date().toISOString(),
-        version: '1.2-pro', // *** UPDATED: Version
+        version: '1.3-pro', // *** UPDATED: Version
         totalTasks: tasks.length,
         tasks: tasks
     };
@@ -1433,7 +2293,7 @@ function exportToExcel() {
         'Value': tasks.length
     }, {
         'Property': 'Version',
-        'Value': '1.2-pro' // *** UPDATED: Version
+        'Value': '1.3-pro' // *** UPDATED: Version
     }];
     
     const ws = XLSX.utils.json_to_sheet(data);
@@ -1524,11 +2384,43 @@ function exportToPDF() {
 }
 
 function exportToGoogleCalendar() {
-    // ... (function is unchanged) ...
+    const tasksWithDates = tasks.filter(t => !t.completed && t.dueDate);
+    
+    if (tasksWithDates.length === 0) {
+        showToast('No tasks with due dates to export', 'info');
+        return;
+    }
+    
+    let icsContent = 'BEGIN:VCALENDAR\nVERSION:2.0\nPRODID:-//TaskMaster Pro//EN\n';
+    
+    tasksWithDates.forEach(task => {
+        const dueDate = new Date(task.dueDate);
+        const uid = task.id + '@taskmasterpro.com';
+        
+        icsContent += 'BEGIN:VEVENT\n';
+        icsContent += `UID:${uid}\n`;
+        icsContent += `DTSTAMP:${formatICSDate(new Date())}\n`;
+        icsContent += `DTSTART:${formatICSDate(dueDate)}\n`;
+        icsContent += `SUMMARY:${escapeICS(task.title)}\n`;
+        if (task.description) {
+            icsContent += `DESCRIPTION:${escapeICS(task.description)}\n`;
+        }
+        icsContent += `PRIORITY:${getPriorityNumber(task.priority)}\n`;
+        icsContent += `CATEGORIES:${capitalize(task.category)}\n`;
+        icsContent += 'END:VEVENT\n';
+    });
+    
+    icsContent += 'END:VCALENDAR';
+    
+    const filename = getTimestampedFilename('tasks', 'ics');
+    downloadFile(icsContent, filename, 'text/calendar');
+    showToast(`${tasksWithDates.length} task(s) exported to ${filename}. Import this file to Google Calendar.`, 'success');
 }
 
 function isDuplicate(newTask, existingTask) {
-    // ... (function is unchanged) ...
+    return newTask.title === existingTask.title &&
+           newTask.category === existingTask.category &&
+           newTask.dueDate === existingTask.dueDate;
 }
 
 // *** UPDATED: importFile function ***
@@ -1854,6 +2746,16 @@ async function loadTasks() {
     }
 }
 
+// *** NEW: Format minutes for display ***
+function formatMinutes(minutes) {
+    if (minutes < 60) {
+        return `${minutes}m`;
+    }
+    const hours = Math.floor(minutes / 60);
+    const mins = minutes % 60;
+    return mins > 0 ? `${hours}h ${mins}m` : `${hours}h`;
+}
+
 // UTILITY FUNCTIONS
 function showToast(message, type = 'success') {
     const toast = document.getElementById('toast');
@@ -1952,11 +2854,8 @@ function getPriorityNumber(priority) {
     return map[priority] || 5;
 }
 
-// MODAL CONTROLS (Updated for a11y)
-
-// Reusable function to show a simple info modal
+// *** UPDATED: Modal Controls ***
 function showInfoModal(title, content) {
-    // *** NEW: a11y focus management ***
     lastFocusedElement = document.activeElement;
     
     let infoModal = document.getElementById('infoModal');
@@ -1985,7 +2884,6 @@ function showInfoModal(title, content) {
     document.getElementById('infoModalContent').innerHTML = content;
     infoModal.classList.remove('hidden');
     
-    // *** NEW: a11y focus ***
     setTimeout(() => infoModal.querySelector('.btn-secondary').focus(), 100);
 }
 
@@ -1994,15 +2892,12 @@ function closeInfoModal() {
     if (infoModal) {
         infoModal.classList.add('hidden');
     }
-    // *** NEW: a11y focus management ***
     if (lastFocusedElement) {
         try { lastFocusedElement.focus(); } catch(e) {}
     }
 }
 
-// Reusable function for custom confirmation dialog
 function showConfirmModal(title, message, onConfirm) {
-    // *** NEW: a11y focus management ***
     lastFocusedElement = document.activeElement;
     
     let confirmModal = document.getElementById('confirmModal');
@@ -2032,20 +2927,15 @@ function showConfirmModal(title, message, onConfirm) {
     document.getElementById('confirmModalMessage').textContent = message;
     
     const confirmOkBtn = document.getElementById('confirmOkBtn');
-    
-    // Clear previous event listener by replacing the node
     const newConfirmOkBtn = confirmOkBtn.cloneNode(true);
     confirmOkBtn.parentNode.replaceChild(newConfirmOkBtn, confirmOkBtn);
     
-    // Add new event listener
     newConfirmOkBtn.addEventListener('click', () => {
-        onConfirm(); // This might be async
+        onConfirm();
         closeConfirmModal();
     });
 
     confirmModal.classList.remove('hidden');
-    
-    // *** NEW: a11y focus ***
     setTimeout(() => newConfirmOkBtn.focus(), 100);
 }
 
@@ -2054,50 +2944,148 @@ function closeConfirmModal() {
     if (confirmModal) {
         confirmModal.classList.add('hidden');
     }
-    // *** NEW: a11y focus management ***
     if (lastFocusedElement) {
         try { lastFocusedElement.focus(); } catch(e) {}
     }
 }
 
-// *** UPDATED: About/Help/Privacy Modals ***
 function showAbout() {
     showInfoModal(
         '<i class="fas fa-check-circle"></i> About TaskMaster Pro',
-        `<p><strong>Version: 1.3 (Pro Features)</strong></p>
-         <p>A comprehensive task management application with subtasks, drag-and-drop, search, and persistent IndexedDB storage.</p>
-         <p>Developed with ❤️ by <strong>Santosh Phuyal</strong></p>
+        `<p><strong>Version: 1.4 Ultimate Edition</strong></p>
+         <p>A comprehensive task management application with:</p>
+         <ul style="list-style-position: inside; padding-left: 1rem;">
+            <li>AI-Powered Dashboard & Insights</li>
+            <li>Collapsible Subtasks (3 levels)</li>
+            <li>Eisenhower Matrix View</li>
+            <li>Focus Mode & Quick Filters</li>
+            <li>Time Estimates & Tracking</li>
+            <li>Batch Editing & Task Cloning</li>
+            <li>Drag & Drop Reordering</li>
+            <li>Advanced Search & Filtering</li>
+         </ul>
+         <p style="margin-top: 1rem;">Developed with ❤️ by <strong>Santosh Phuyal</strong></p>
          <p style="font-size: 0.875rem; color: var(--text-secondary); margin-top: 1rem;">
-            Note: While PIN protection hides your tasks, all data is stored unencrypted in your browser.
+            All data stored securely in your browser's IndexedDB.
          </p>`
     );
 }
 
 function showHelp() {
      showInfoModal(
-        '<i class="fas fa-question-circle"></i> Help',
-        `<ul style="list-style-position: inside; padding-left: 1rem;">
-            <li><strong>Search:</strong> Use the search bar to find tasks by title, description, or tags.</li>
-            <li><strong>Subtasks:</strong> Click the <i class="fas fa-plus-circle"></i> icon on a task to add a subtask.</li>
-            <li><strong>Drag & Drop:</strong> In the 'Manual Order' sort view, you can drag and drop top-level tasks to reorder them.</li>
-            <li><strong>Filters:</strong> Use the tabs or your browser's back/forward buttons to change filters.</li>
-            <li><strong>Storage:</strong> Your data is now saved securely in your browser's IndexedDB.</li>
-            <li><strong>Bulk Delete:</strong> Use the leftmost checkbox on each task to select multiple items, then click **Delete Selected**.</li>
-            <li><strong>Complete Task:</strong> Click the inner checkbox. Completed recurring tasks will generate their next occurrence.</li>
-         </ul>`
+        '<i class="fas fa-question-circle"></i> Help & Shortcuts',
+        `<h3 style="margin-top: 0;">✨ New Features</h3>
+        <ul style="list-style-position: inside; padding-left: 1rem;">
+            <li><strong>AI Dashboard:</strong> Get smart insights and productivity scores</li>
+            <li><strong>Quick Add:</strong> "Buy milk @office !high #groceries 30m"</li>
+            <li><strong>Focus Mode:</strong> Shows only urgent/today's tasks</li>
+            <li><strong>Matrix View:</strong> Eisenhower urgent/important grid</li>
+            <li><strong>Quick Filters:</strong> Filter by priority, tags, due date</li>
+            <li><strong>Batch Edit:</strong> Select multiple tasks and edit together</li>
+            <li><strong>Clone Tasks:</strong> Duplicate tasks with one click</li>
+            <li><strong>Time Estimates:</strong> Track how long tasks take</li>
+        </ul>
+        
+        <h3 style="margin-top: 1.5rem;">⌨️ Keyboard Shortcuts</h3>
+        <ul style="list-style-position: inside; padding-left: 1rem;">
+            <li><kbd>Ctrl+N</kbd> - New task</li>
+            <li><kbd>Ctrl+F</kbd> - Focus search</li>
+            <li><kbd>Ctrl+I</kbd> - Show detailed insights</li>
+            <li><kbd>Ctrl+,</kbd> - Open settings</li>
+            <li><kbd>1-6</kbd> - Switch between tabs</li>
+            <li><kbd>ESC</kbd> - Close any modal</li>
+        </ul>
+        
+        <h3 style="margin-top: 1.5rem;">🎯 Quick Add Syntax</h3>
+        <ul style="list-style-position: inside; padding-left: 1rem;">
+            <li><strong>@category</strong> - @personal, @office, @misc</li>
+            <li><strong>!priority</strong> - !urgent, !high, !medium, !low</li>
+            <li><strong>#tags</strong> - #work #important</li>
+            <li><strong>Time</strong> - 30m (minutes) or 2h (hours)</li>
+        </ul>
+        
+        <p style="margin-top: 1rem; font-size: 0.875rem; color: var(--text-secondary);">
+            💡 Tip: Click on tags to quick-filter, and use the chevron to collapse subtasks!
+        </p>`
     );
 }
 
 function showPrivacy() {
     showInfoModal(
         '<i class="fas fa-shield-alt"></i> Privacy Policy',
-        // *** UPDATED: Mention IndexedDB ***
         `<p>All your data is stored locally on your device using your browser's <strong>IndexedDB</strong>.</p>
-         <p>No data is sent to any external servers. Your tasks and settings remain private and under your control.</p>`
+         <p>✅ No data is sent to any external servers</p>
+         <p>✅ Your tasks and settings remain private and under your control</p>
+         <p>✅ Data persists across browser sessions</p>
+         <p style="margin-top: 1rem; font-size: 0.875rem; color: var(--text-secondary);">
+            Note: Clearing browser data will delete all tasks. Use Export to backup!
+         </p>`
     );
 }
 
-// INITIALIZATION
+// *** UPDATED: Keyboard Shortcuts ***
+document.addEventListener('keydown', function(e) {
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') {
+        if (e.key === 'Escape') {
+            closeTaskModal();
+            closeSettingsModal();
+            closeInsightsModal();
+            closeInfoModal();
+            closeConfirmModal();
+        }
+        return;
+    }
+    
+    if ((e.ctrlKey || e.metaKey) && e.key === 'n') {
+        e.preventDefault();
+        openAdvancedForm();
+    }
+    
+    if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
+        e.preventDefault();
+        const searchInput = document.getElementById('searchInput');
+        if (searchInput) searchInput.focus();
+    }
+    
+    if ((e.ctrlKey || e.metaKey) && e.key === 'i') {
+        e.preventDefault();
+        showInsights();
+    }
+    
+    if ((e.ctrlKey || e.metaKey) && e.key === ',') {
+        e.preventDefault();
+        openSettings();
+    }
+    
+    // *** NEW: Ctrl+B for batch edit ***
+    if ((e.ctrlKey || e.metaKey) && e.key === 'b') {
+        e.preventDefault();
+        openBatchEdit();
+    }
+    
+    // *** NEW: Ctrl+M for matrix view ***
+    if ((e.ctrlKey || e.metaKey) && e.key === 'm') {
+        e.preventDefault();
+        toggleView(currentView === 'list' ? 'matrix' : 'list');
+    }
+    
+    if (e.key === 'Escape') {
+        closeTaskModal();
+        closeSettingsModal();
+        closeInsightsModal();
+        closeInfoModal();
+        closeConfirmModal();
+    }
+    
+    if (e.key >= '1' && e.key <= '6' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        const filters = ['all', 'personal', 'office', 'misc', 'recurring', 'completed'];
+        const index = parseInt(e.key) - 1;
+        if (filters[index]) {
+            filterTasks(filters[index]);
+        }
+    }
+});
+
 window.addEventListener('load', () => {
     if ('Notification' in window && Notification.permission === 'default') {
         Notification.requestPermission();
