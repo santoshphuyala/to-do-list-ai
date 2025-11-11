@@ -37,6 +37,8 @@ let currentEditingTask = null;
 let selectedTasks = new Set();
 let currentSort = 'dueDate'; // *** UPDATED: Default sort is nearest due date
 let currentSearch = ''; // *** NEW: Search state
+let activeQuickFilter = null; // *** NEW: Active quick filter (overdue, today, week)
+let activePriorityFilter = null; // *** NEW: Active priority filter (urgent, high, medium, low)
 let settings = {
     id: 'main-settings', // *** NEW: Key for IndexedDB settings object
     defaultCategory: 'personal',
@@ -63,9 +65,11 @@ document.addEventListener('DOMContentLoaded', async function() {
         setupEventListeners();
         checkReminders();
         renderAISummary();
+        updateFilterCounts(); // *** NEW: Initialize filter counts
         
         // *** NEW: Handle URL Hash for filters on page load ***
         handleHashChange();
+
         
         // *** NEW: Handle PWA shortcut action ***
         const urlParams = new URLSearchParams(window.location.search);
@@ -159,6 +163,181 @@ function clearSearch() {
     const clearSearchBtn = document.getElementById('clearSearchBtn');
     if(clearSearchBtn) clearSearchBtn.classList.add('hidden');
     renderTasks();
+}
+
+// *** NEW: Quick Filter Functions ***
+
+/**
+ * Apply time-based quick filter (overdue, today, week)
+ */
+function applyQuickFilter(filterType) {
+    const btn = document.getElementById(`filter-${filterType}`);
+    
+    // Toggle filter
+    if (activeQuickFilter === filterType) {
+        activeQuickFilter = null;
+        btn.classList.remove('active');
+    } else {
+        // Remove previous active filter
+        if (activeQuickFilter) {
+            const prevBtn = document.getElementById(`filter-${activeQuickFilter}`);
+            if (prevBtn) prevBtn.classList.remove('active');
+        }
+        
+        activeQuickFilter = filterType;
+        btn.classList.add('active');
+    }
+    
+    updateClearFiltersButton();
+    renderTasks();
+}
+
+/**
+ * Apply priority filter
+ */
+function applyPriorityFilter(priority) {
+    const btn = document.getElementById(`filter-${priority}`);
+    
+    // Toggle filter
+    if (activePriorityFilter === priority) {
+        activePriorityFilter = null;
+        btn.classList.remove('active');
+    } else {
+        // Remove previous active filter
+        if (activePriorityFilter) {
+            const prevBtn = document.getElementById(`filter-${activePriorityFilter}`);
+            if (prevBtn) prevBtn.classList.remove('active');
+        }
+        
+        activePriorityFilter = priority;
+        btn.classList.add('active');
+    }
+    
+    updateClearFiltersButton();
+    renderTasks();
+}
+
+/**
+ * Clear all quick filters
+ */
+function clearQuickFilters() {
+    // Clear quick filter
+    if (activeQuickFilter) {
+        const btn = document.getElementById(`filter-${activeQuickFilter}`);
+        if (btn) btn.classList.remove('active');
+        activeQuickFilter = null;
+    }
+    
+    // Clear priority filter
+    if (activePriorityFilter) {
+        const btn = document.getElementById(`filter-${activePriorityFilter}`);
+        if (btn) btn.classList.remove('active');
+        activePriorityFilter = null;
+    }
+    
+    updateClearFiltersButton();
+    renderTasks();
+}
+
+/**
+ * Show/hide clear filters button
+ */
+function updateClearFiltersButton() {
+    const clearBtn = document.getElementById('clearFiltersBtn');
+    if (clearBtn) {
+        if (activeQuickFilter || activePriorityFilter) {
+            clearBtn.style.display = 'flex';
+        } else {
+            clearBtn.style.display = 'none';
+        }
+    }
+}
+
+/**
+ * Update filter counts
+ */
+function updateFilterCounts() {
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const tomorrow = new Date(today.getTime() + 24 * 60 * 60 * 1000);
+    const weekEnd = new Date(today.getTime() + 7 * 24 * 60 * 60 * 1000);
+    
+    const pendingTasks = tasks.filter(t => !t.completed);
+    
+    // Count overdue
+    const overdueCount = pendingTasks.filter(t => {
+        if (!t.dueDate) return false;
+        return new Date(t.dueDate) < today;
+    }).length;
+    
+    // Count today
+    const todayCount = pendingTasks.filter(t => {
+        if (!t.dueDate) return false;
+        const dueDate = new Date(t.dueDate);
+        return dueDate >= today && dueDate < tomorrow;
+    }).length;
+    
+    // Count this week
+    const weekCount = pendingTasks.filter(t => {
+        if (!t.dueDate) return false;
+        const dueDate = new Date(t.dueDate);
+        return dueDate >= today && dueDate < weekEnd;
+    }).length;
+    
+    // Count by priority
+    const urgentCount = pendingTasks.filter(t => t.priority === 'urgent').length;
+    const highCount = pendingTasks.filter(t => t.priority === 'high').length;
+    const mediumCount = pendingTasks.filter(t => t.priority === 'medium').length;
+    const lowCount = pendingTasks.filter(t => t.priority === 'low').length;
+    
+    // Update UI
+    const updateCount = (id, count) => {
+        const el = document.getElementById(id);
+        if (el) el.textContent = count;
+    };
+    
+    updateCount('count-overdue', overdueCount);
+    updateCount('count-today', todayCount);
+    updateCount('count-week', weekCount);
+    updateCount('count-urgent', urgentCount);
+    updateCount('count-high', highCount);
+    updateCount('count-medium', mediumCount);
+    updateCount('count-low', lowCount);
+}
+
+/**
+ * Check if task matches quick filter criteria
+ */
+function matchesQuickFilter(task) {
+    if (!activeQuickFilter) return true;
+    if (task.completed) return false; // Quick filters only apply to pending tasks
+    
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const tomorrow = new Date(today.getTime() + 24 * 60 * 60 * 1000);
+    const weekEnd = new Date(today.getTime() + 7 * 24 * 60 * 60 * 1000);
+    
+    if (!task.dueDate) return false;
+    const dueDate = new Date(task.dueDate);
+    
+    switch (activeQuickFilter) {
+        case 'overdue':
+            return dueDate < today;
+        case 'today':
+            return dueDate >= today && dueDate < tomorrow;
+        case 'week':
+            return dueDate >= today && dueDate < weekEnd;
+        default:
+            return true;
+    }
+}
+
+/**
+ * Check if task matches priority filter
+ */
+function matchesPriorityFilter(task) {
+    if (!activePriorityFilter) return true;
+    return task.priority === activePriorityFilter && !task.completed;
 }
 
 // PIN Protection
@@ -742,6 +921,15 @@ function renderTasks() {
         
         processedTasks = processedTasks.filter(t => searchedTaskIds.has(t.id));
     }
+
+    // 1.5. Apply Quick Filters (time-based and priority)
+    if (activeQuickFilter || activePriorityFilter) {
+        processedTasks = processedTasks.filter(t => {
+            return matchesQuickFilter(t) && matchesPriorityFilter(t);
+        });
+    }
+    
+   
     
     // 2. Apply Tab Filter (e.g., 'all', 'personal', 'completed')
     let filteredTasks = [];
@@ -1041,10 +1229,12 @@ function renderTasks() {
         return html;
     };
     
-    container.innerHTML = taskTree.map(task => renderTaskHTML(task, 0)).join('');
+        container.innerHTML = taskTree.map(task => renderTaskHTML(task, 0)).join('');
 
     updateBulkActionUI();
+    updateFilterCounts(); // *** NEW: Update filter counts
 }
+
     
 // *** NEW: Toggle Subtask Collapse ***
 function toggleSubtaskCollapse(taskId) {

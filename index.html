@@ -125,6 +125,92 @@
                     <button class="tab" onclick="filterTasks('completed')">Completed</button>
                 </div>
             </div>
+
+<!-- *** NEW: Quick Filters Section *** -->
+<div class="quick-filters-section">
+    <div class="filter-group">
+        <div class="filter-group-header">
+            <i class="fas fa-calendar-check"></i>
+            <span>Quick Filters</span>
+        </div>
+        <div class="filter-buttons">
+            <button class="filter-btn" 
+                    id="filter-overdue" 
+                    onclick="applyQuickFilter('overdue')"
+                    title="Show overdue tasks">
+                <i class="fas fa-exclamation-triangle"></i>
+                <span>Overdue</span>
+                <span class="filter-count" id="count-overdue">0</span>
+            </button>
+            <button class="filter-btn" 
+                    id="filter-today" 
+                    onclick="applyQuickFilter('today')"
+                    title="Show today's tasks">
+                <i class="fas fa-calendar-day"></i>
+                <span>Today</span>
+                <span class="filter-count" id="count-today">0</span>
+            </button>
+            <button class="filter-btn" 
+                    id="filter-week" 
+                    onclick="applyQuickFilter('week')"
+                    title="Show this week's tasks">
+                <i class="fas fa-calendar-week"></i>
+                <span>This Week</span>
+                <span class="filter-count" id="count-week">0</span>
+            </button>
+        </div>
+    </div>
+    
+    <div class="filter-group">
+        <div class="filter-group-header">
+            <i class="fas fa-flag"></i>
+            <span>Priority Filters</span>
+        </div>
+        <div class="filter-buttons">
+            <button class="filter-btn priority-urgent" 
+                    id="filter-urgent" 
+                    onclick="applyPriorityFilter('urgent')"
+                    title="Show urgent tasks">
+                <i class="fas fa-fire"></i>
+                <span>Urgent</span>
+                <span class="filter-count" id="count-urgent">0</span>
+            </button>
+            <button class="filter-btn priority-high" 
+                    id="filter-high" 
+                    onclick="applyPriorityFilter('high')"
+                    title="Show high priority tasks">
+                <i class="fas fa-arrow-up"></i>
+                <span>High</span>
+                <span class="filter-count" id="count-high">0</span>
+            </button>
+            <button class="filter-btn priority-medium" 
+                    id="filter-medium" 
+                    onclick="applyPriorityFilter('medium')"
+                    title="Show medium priority tasks">
+                <i class="fas fa-minus"></i>
+                <span>Medium</span>
+                <span class="filter-count" id="count-medium">0</span>
+            </button>
+            <button class="filter-btn priority-low" 
+                    id="filter-low" 
+                    onclick="applyPriorityFilter('low')"
+                    title="Show low priority tasks">
+                <i class="fas fa-arrow-down"></i>
+                <span>Low</span>
+                <span class="filter-count" id="count-low">0</span>
+            </button>
+        </div>
+    </div>
+    
+    <button class="clear-filters-btn" 
+            id="clearFiltersBtn" 
+            onclick="clearQuickFilters()"
+            style="display: none;"
+            title="Clear all filters">
+        <i class="fas fa-times-circle"></i>
+        Clear Filters
+    </button>
+</div>
         </section>
 
         <section class="tasks-section">
