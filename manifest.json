@@ -3,7 +3,6 @@
   "short_name": "TaskMaster",
   "description": "Advanced To-Do List with AI Insights",
   "start_url": "./index.html",
-  "scope": "/", 
   "display": "standalone",
   "background_color": "#1DA1F2",
   "theme_color": "#1DA1F2",
@@ -28,36 +27,30 @@
       "purpose": "maskable"
     }
   ],
-  "shortcuts": [
-    {
-      "name": "New Task",
-      "short_name": "New",
-      "description": "Quickly add a new to-do item.",
-      "url": "/index.html?action=new",
-      "icons": [{ "src": "shortcuts/new-task.png", "sizes": "96x96" }]
-    },
-    {
-      "name": "View Archive",
-      "short_name": "Archive",
-      "description": "View completed and archived tasks.",
-      "url": "/index.html?page=archive",
-      "icons": [{ "src": "shortcuts/archive-view.png", "sizes": "96x96" }]
-    }
-  ],
   "screenshots": [
     {
-      "src": "icons/screenshot1.png",
+      "src": "screenshots/screenshot1.png",
       "sizes": "1080x1920",
       "type": "image/png",
       "form_factor": "narrow",
       "label": "Task List View"
     },
     {
-      "src": "icons/screenshots/screenshot2.png",
+      "src": "screenshots/screenshot2.png",
       "sizes": "1080x1920",
       "type": "image/png",
       "form_factor": "narrow",
-      "label": "Task Details"
+      "label": "Task Edit Modal"
+    }
+  ],
+  
+  "shortcuts": [
+    {
+      "name": "Add New Task",
+      "short_name": "New Task",
+      "description": "Quickly add a new task",
+      "url": "./index.html?action=add-task",
+      "icons": [{ "src": "icons/android-chrome-192x192.png", "sizes": "192x192" }]
     }
   ]
 }

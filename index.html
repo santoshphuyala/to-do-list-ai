@@ -6,26 +6,24 @@
     
     <meta name="theme-color" content="#1DA1F2">
     
-    <meta name="description" content="Advanced AI-Powered Task Management with Smart Insights">
-    <title>TaskMaster Pro - Ultimate Task Manager</title>
+    <meta name="description" content="Advanced To-Do List with AI Insights">
+    <title>TaskMaster Pro - Advanced To-Do List</title>
 
     <link rel="manifest" href="manifest.json">
 
     <link rel="icon" type="image/png" href="icons/android-chrome-192x192.png" sizes="192x192">
     
-    <meta name="mobile-web-app-capable" content="yes">
-    <link rel="apple-touch-icon" href="icons/android-chrome-192x192.png">
-    
+    <link rel="apple-touch-icon" href="android-chrome-192x192.png">
 
-    <meta name="apple-mobile-web-app-capable" content="yes">
+   <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link rel="stylesheet" href="styles.css">
+
 </head>
 <body>
-    <!-- PIN Lock Screen -->
     <div id="pinLockScreen" class="pin-lock-screen hidden">
         <div class="pin-container">
             <i class="fas fa-lock pin-icon"></i>
@@ -36,9 +34,7 @@
         </div>
     </div>
 
-    <!-- Main App -->
     <div id="mainApp">
-        <!-- Header -->
         <header class="header">
             <div class="container">
                 <div class="header-content">
@@ -58,183 +54,125 @@
             </div>
         </header>
 
-        <!-- *** NEW: AI Dashboard - Always Visible at Top *** -->
-        <section class="ai-dashboard-section">
-            <div class="container">
-                <div id="aiDashboard" class="ai-dashboard-container">
-                    <!-- Populated by JavaScript -->
-                </div>
-            </div>
+       
+
+        <!-- Quick Add Section -->
+<div class="quick-add-container">
+    <input type="text" 
+           id="quickTaskInput" 
+           placeholder="Quick add a task... (Press Enter)"
+           aria-label="Quick add task">
+    <button onclick="quickAddTask()" class="btn btn-primary" aria-label="Add task">
+        <i class="fas fa-plus"></i> Add
+    </button>
+    <button onclick="openAdvancedForm()" class="btn btn-secondary" aria-label="Open advanced form">
+        <i class="fas fa-edit"></i> Advanced
+    </button>
+</div>
+
+<!-- *** NEW: Quick Export/Import Section *** -->
+<div class="quick-export-import-container" style="display: flex; gap: 0.5rem; margin-top: 0.75rem; flex-wrap: wrap;">
+    <button onclick="showQuickExportMenu()" class="btn btn-secondary" style="flex: 1; min-width: 150px;" aria-label="Quick Export">
+        <i class="fas fa-file-export"></i> Quick Export
+    </button>
+    <button onclick="document.getElementById('quickImportFile').click()" class="btn btn-secondary" style="flex: 1; min-width: 150px;" aria-label="Quick Import">
+        <i class="fas fa-file-import"></i> Quick Import
+    </button>
+    <input type="file" 
+           id="quickImportFile" 
+           accept=".json,.csv,.xlsx" 
+           onchange="importFile(event)" 
+           style="display: none;">
+</div>
+
+<!-- Quick Export Menu (Hidden by default) -->
+<div id="quickExportMenu" class="quick-export-menu" style="display: none; margin-top: 0.5rem; padding: 0.75rem; background: var(--card-bg); border: 2px solid var(--border-color); border-radius: 8px;">
+    <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+        <button onclick="exportToJSON(); hideQuickExportMenu();" class="btn btn-sm" style="flex: 1;">
+            <i class="fas fa-code"></i> JSON
+        </button>
+        <button onclick="exportToCSV(); hideQuickExportMenu();" class="btn btn-sm" style="flex: 1;">
+            <i class="fas fa-table"></i> CSV
+        </button>
+        <button onclick="exportToExcel(); hideQuickExportMenu();" class="btn btn-sm" style="flex: 1;">
+            <i class="fas fa-file-excel"></i> Excel
+        </button>
+        <button onclick="exportToPDF(); hideQuickExportMenu();" class="btn btn-sm" style="flex: 1;">
+            <i class="fas fa-file-pdf"></i> PDF
+        </button>
+    </div>
+</div>
+
         </section>
 
-        <!-- *** NEW: Quick Filters Panel *** -->
-        <section class="quick-filters-section">
-            <div class="container">
-                <div id="quickFiltersPanel" class="quick-filters-container">
-                    <!-- Populated by JavaScript -->
-                </div>
-            </div>
-        </section>
-
-        <!-- AI Insights Summary (Collapsible - Legacy) -->
-        <section id="aiSummarySection" class="ai-summary-section">
-            <div class="container">
-                <div class="ai-summary-header">
-                    <h3><i class="fas fa-brain"></i> AI Insights (Legacy)</h3>
-                    <button class="icon-btn" id="toggleSummaryBtn" title="Toggle Insights">
-                        <i class="fas fa-chevron-down"></i>
-                    </button>
-                </div>
-                <div id="aiSummaryContent" class="ai-summary-content hidden">
-                    <!-- Populated by JavaScript -->
-                </div>
-            </div>
-        </section>
-
-        <!-- Quick Add Task -->
-        <section class="quick-add">
-            <div class="container">
-                <div class="quick-add-form">
-                    <input type="text" 
-                           id="quickTaskInput" 
-                           placeholder="Quick add: 'Buy milk @office !high #groceries 30m' (press Enter)..." 
-                           class="quick-input">
-                    <button onclick="quickAddTask()" class="btn btn-primary" title="Add Task">
-                        <i class="fas fa-plus"></i>
-                    </button>
-                    <button onclick="openAdvancedForm()" class="btn btn-secondary" title="Advanced Form">
-                        <i class="fas fa-sliders-h"></i>
-                    </button>
-                </div>
-            </div>
-        </section>
-
-        <!-- Filter Section (Search + Tabs) -->
         <section class="filter-section">
             <div class="container">
-                <!-- Search Bar -->
+                
                 <div class="search-container">
                     <i class="fas fa-search search-icon"></i>
-                    <input type="text" 
-                           id="searchInput" 
-                           placeholder="Search tasks, descriptions, or tags..." 
-                           class="search-input">
-                    <button id="clearSearchBtn" 
-                            class="clear-search-btn hidden" 
-                            onclick="clearSearch()" 
-                            aria-label="Clear search">
+                    <input type="text" id="searchInput" placeholder="Search tasks, descriptions, or tags..." class="search-input">
+                    <button id="clearSearchBtn" class="clear-search-btn hidden" onclick="clearSearch()" aria-label="Clear search">
                         <i class="fas fa-times"></i>
                     </button>
                 </div>
-
-                <!-- Tabs with Badges -->
+                
                 <div class="tabs">
-                    <div class="tab active" onclick="filterTasks('all')">
-                        All Tasks
-                        <span class="tab-badge" id="badge-all">0</span>
-                    </div>
-                    <div class="tab" onclick="filterTasks('personal')">
-                        <i class="fas fa-user"></i> Personal
-                        <span class="tab-badge" id="badge-personal">0</span>
-                    </div>
-                    <div class="tab" onclick="filterTasks('office')">
-                        <i class="fas fa-briefcase"></i> Office
-                        <span class="tab-badge" id="badge-office">0</span>
-                    </div>
-                    <div class="tab" onclick="filterTasks('misc')">
-                        <i class="fas fa-tasks"></i> Misc Work
-                        <span class="tab-badge" id="badge-misc">0</span>
-                    </div>
-                    <div class="tab" onclick="filterTasks('recurring')">
-                        <i class="fas fa-redo"></i> Recurring
-                        <span class="tab-badge" id="badge-recurring">0</span>
-                    </div>
-                    <div class="tab" onclick="filterTasks('completed')">
-                        <i class="fas fa-check-circle"></i> Completed
-                        <span class="tab-badge" id="badge-completed">0</span>
-                    </div>
+                    <button class="tab active" onclick="filterTasks('all')">All</button>
+                    <button class="tab" onclick="filterTasks('personal')">Personal</button>
+                    <button class="tab" onclick="filterTasks('office')">Office</button>
+                    <button class="tab" onclick="filterTasks('misc')">Misc</button>
+                    <button class="tab" onclick="filterTasks('recurring')">Recurring</button>
+                    <button class="tab" onclick="filterTasks('completed')">Completed</button>
                 </div>
             </div>
         </section>
 
-        <!-- *** NEW: View Controls (List/Matrix + Focus Mode) *** -->
-        <section class="view-controls-section">
-            <div class="container">
-                <div class="view-controls">
-                    <div class="view-toggle">
-                        <button class="view-toggle-btn active" data-view="list" onclick="toggleView('list')">
-                            <i class="fas fa-list"></i> List View
-                        </button>
-                        <button class="view-toggle-btn" data-view="matrix" onclick="toggleView('matrix')">
-                            <i class="fas fa-th"></i> Matrix View
-                        </button>
-                    </div>
-                    
-                    <button id="focusModeBtn" class="focus-mode-btn" onclick="toggleFocusMode()">
-                        <i class="fas fa-bullseye"></i> Focus Mode
-                    </button>
-                </div>
-            </div>
-        </section>
-
-        <!-- Tasks Section -->
         <section class="tasks-section">
             <div class="container">
 
-                <!-- *** UPDATED: Bulk Actions with Batch Edit Button *** -->
-                <div id="bulkActionsContainer" class="bulk-actions hidden">
-                    <div class="bulk-select">
-                        <input type="checkbox" 
-                               id="selectAllCheckbox" 
-                               onchange="toggleSelectAll(event)">
+                <div id="bulkActionsContainer" class="bulk-actions-bar hidden">
+                    <div class="select-all-container">
+                        <input type="checkbox" id="selectAllCheckbox" onchange="toggleSelectAll(event)">
                         <label for="selectAllCheckbox">Select All</label>
                     </div>
-                    
-                    <div class="bulk-buttons">
-                        <!-- *** NEW: Batch Edit Button *** -->
-                        <button id="batchEditBtn" 
-                                class="btn btn-primary" 
-                                onclick="openBatchEdit()"
-                                style="display: none;">
-                            <i class="fas fa-edit"></i> Batch Edit
-                        </button>
-                        
-                        <button id="deleteSelectedBtn" 
-                                class="btn btn-danger" 
-                                onclick="deleteSelectedTasks()">
-                            Delete Selected (0)
-                        </button>
-                    </div>
-                    
-                    <div class="sort-control">
-                        <label for="sortSelect">Sort by:</label>
+                    <div class="sort-container">
+                        <label for="sortSelect">Sort By:</label>
                         <select id="sortSelect" class="form-control">
                             <option value="order">Manual Order</option>
                             <option value="priority">Priority</option>
                             <option value="dueDate">Due Date</option>
                             <option value="title">Title (A-Z)</option>
-                            <option value="creationDate">Date Created</option>
                         </select>
                     </div>
+                    <button id="deleteSelectedBtn" class="btn btn-danger" onclick="deleteSelectedTasks()" disabled>
+                        Delete Selected (0)
+                    </button>
                 </div>
 
-                <!-- Tasks Container (Supports Drag & Drop) -->
-                <div id="tasksContainer" 
-                     class="tasks-container" 
-                     ondragover="handleDragOver(event)" 
-                     ondrop="handleDrop(event)">
-                    <!-- Tasks populated by JavaScript -->
+                <div id="tasksContainer" class="tasks-container" ondragover="handleDragOver(event)" ondrop="handleDrop(event)">
                 </div>
 
             </div>
+
+<!-- AI Summary Section -->
+<div class="ai-summary-container">
+    <div class="ai-summary-header">
+        <h3><i class="fas fa-brain"></i> AI Insights</h3>
+        <button id="toggleSummaryBtn" onclick="toggleAISummary()" title="Toggle Insights">
+            <i class="fas fa-chevron-up"></i>
+        </button>
+    </div>
+    <div id="aiSummaryContent" class="ai-summary-content">
+        <!-- AI insights will be rendered here -->
+    </div>
+</div>
         </section>
 
-        <!-- Task Modal (Add/Edit) -->
         <div id="taskModal" class="modal hidden">
             <div class="modal-content">
                 <div class="modal-header">
                     <h2 id="modalTitle">Add New Task</h2>
-                    <button class="close-btn" onclick="closeTaskModal()" aria-label="Close modal">
+                    <button class="close-btn" onclick="closeTaskModal()">
                         <i class="fas fa-times"></i>
                     </button>
                 </div>
@@ -244,19 +182,12 @@
                     
                     <div class="form-group">
                         <label for="taskTitle">Task Title *</label>
-                        <input type="text" 
-                               id="taskTitle" 
-                               required 
-                               class="form-control"
-                               placeholder="e.g., Complete project report">
+                        <input type="text" id="taskTitle" required class="form-control">
                     </div>
-                    
+
                     <div class="form-group">
                         <label for="taskDescription">Description</label>
-                        <textarea id="taskDescription" 
-                                  rows="3" 
-                                  class="form-control"
-                                  placeholder="Add details about this task..."></textarea>
+                        <textarea id="taskDescription" rows="3" class="form-control"></textarea>
                     </div>
 
                     <div class="form-row">
@@ -282,32 +213,14 @@
 
                     <div class="form-row">
                         <div class="form-group">
-                            <label for="taskDueDate">
-                                <i class="fas fa-calendar"></i> Due Date
-                            </label>
+                            <label for="taskDueDate">Due Date</label>
                             <input type="datetime-local" id="taskDueDate" class="form-control">
                         </div>
 
                         <div class="form-group">
-                            <label for="taskReminder">
-                                <i class="fas fa-bell"></i> Reminder
-                            </label>
+                            <label for="taskReminder">Reminder</label>
                             <input type="datetime-local" id="taskReminder" class="form-control">
                         </div>
-                    </div>
-
-                    <!-- *** NEW: Time Estimate Field *** -->
-                    <div class="form-group">
-                        <label for="taskEstimate">
-                            <i class="fas fa-clock"></i> Time Estimate (minutes)
-                        </label>
-                        <input type="number" 
-                               id="taskEstimate" 
-                               class="form-control" 
-                               placeholder="e.g., 30, 60, 120"
-                               min="0"
-                               step="15">
-                        <small class="form-help">Optional: How long will this take?</small>
                     </div>
 
                     <div class="form-group">
@@ -327,46 +240,36 @@
                     </div>
 
                     <div class="form-group">
-                        <label for="taskTags">
-                            <i class="fas fa-tags"></i> Tags (comma separated)
-                        </label>
-                        <input type="text" 
-                               id="taskTags" 
-                               placeholder="work, urgent, meeting" 
-                               class="form-control">
+                        <label for="taskTags">Tags (comma separated)</label>
+                        <input type="text" id="taskTags" placeholder="work, urgent, meeting" class="form-control">
                     </div>
 
                     <div class="form-actions">
                         <button type="button" class="btn btn-secondary" onclick="closeTaskModal()">Cancel</button>
-                        <button type="submit" class="btn btn-primary">
-                            <i class="fas fa-save"></i> Save Task
-                        </button>
+                        <button type="submit" class="btn btn-primary">Save Task</button>
                     </div>
                 </form>
             </div>
         </div>
 
-        <!-- Insights Modal (Full Report) -->
         <div id="insightsModal" class="modal hidden">
             <div class="modal-content modal-large">
                 <div class="modal-header">
                     <h2><i class="fas fa-chart-line"></i> Full Insights Report</h2>
-                    <button class="close-btn" onclick="closeInsightsModal()" aria-label="Close modal">
+                    <button class="close-btn" onclick="closeInsightsModal()">
                         <i class="fas fa-times"></i>
                     </button>
                 </div>
                 <div id="insightsContent" class="insights-content">
-                    <!-- Populated by JavaScript -->
-                </div>
+                    </div>
             </div>
         </div>
 
-        <!-- Settings Modal -->
         <div id="settingsModal" class="modal hidden">
             <div class="modal-content">
                 <div class="modal-header">
                     <h2><i class="fas fa-cog"></i> Settings</h2>
-                    <button class="close-btn" onclick="closeSettingsModal()" aria-label="Close modal">
+                    <button class="close-btn" onclick="closeSettingsModal()">
                         <i class="fas fa-times"></i>
                     </button>
                 </div>
@@ -394,11 +297,7 @@
 
                     <div class="form-group">
                         <label for="defaultReminderHours">Default Reminder (hours before due)</label>
-                        <input type="number" 
-                               id="defaultReminderHours" 
-                               min="0" 
-                               value="2" 
-                               class="form-control">
+                        <input type="number" id="defaultReminderHours" min="0" value="2" class="form-control">
                     </div>
 
                     <h3>Security</h3>
@@ -410,20 +309,24 @@
                         </label>
                         <div id="pinSettings" class="pin-settings hidden">
                             <label for="newPin" class="sr-only">New PIN</label>
-                            <input type="password" 
-                                   id="newPin" 
-                                   maxlength="6" 
-                                   placeholder="Enter 6-digit PIN" 
-                                   class="form-control">
+                            <input type="password" id="newPin" maxlength="6" placeholder="Enter 6-digit PIN" class="form-control">
                             <label for="confirmPin" class="sr-only">Confirm PIN</label>
-                            <input type="password" 
-                                   id="confirmPin" 
-                                   maxlength="6" 
-                                   placeholder="Confirm PIN" 
-                                   class="form-control">
+                            <input type="password" id="confirmPin" maxlength="6" placeholder="Confirm PIN" class="form-control">
                             <button onclick="savePinSettings()" class="btn btn-primary">Save PIN</button>
                         </div>
                     </div>
+
+                    <h3>Data Management</h3>
+                    <div class="form-group">
+                        <label>Danger Zone</label>
+                        <button onclick="clearAllTasks()" class="btn btn-danger">
+                            <i class="fas fa-exclamation-triangle"></i> Clear All Tasks
+                        </button>
+                        <p style="font-size: 0.875rem; color: var(--text-secondary); margin-top: 0.5rem;">
+                            This will permanently delete all tasks and cannot be undone.
+                        </p>
+                    </div>
+
 
                     <h3>Import / Export</h3>
                     
@@ -441,47 +344,29 @@
                             <i class="fas fa-file-pdf"></i> Export to PDF
                         </button>
                         <button onclick="exportToGoogleCalendar()" class="btn btn-secondary">
-                            <i class="fab fa-google"></i> Export to Calendar
+                            <i class="fab fa-google"></i> Export to Google Calendar
                         </button>
                         
                         <div class="import-section">
                             <label for="importFile" class="btn btn-primary">
                                 <i class="fas fa-upload"></i> Import File
                             </label>
-                            <input type="file" 
-                                   id="importFile" 
-                                   accept=".json,.csv,.xlsx" 
-                                   onchange="importFile(event)" 
-                                   style="display: none;">
+                            <input type="file" id="importFile" accept=".json,.csv,.xlsx" onchange="importFile(event)" style="display: none;">
                         </div>
                     </div>
 
-                    <h3>Data Management</h3>
-                    <div class="form-group">
-                        <label>Danger Zone</label>
-                        <button onclick="clearAllTasks()" class="btn btn-danger">
-                            <i class="fas fa-exclamation-triangle"></i> Clear All Tasks
-                        </button>
-                        <p style="font-size: 0.875rem; color: var(--text-secondary); margin-top: 0.5rem;">
-                            This will permanently delete all tasks and cannot be undone.
-                        </p>
-                    </div>
-
                     <div class="form-actions">
-                        <button class="btn btn-primary" onclick="saveSettings()">
-                            <i class="fas fa-save"></i> Save Settings
-                        </button>
+                        <button class="btn btn-primary" onclick="saveSettings()">Save Settings</button>
                     </div>
                 </div>
             </div>
         </div>
 
-        <!-- Import Options Modal -->
         <div id="importOptionsModal" class="modal hidden">
             <div class="modal-content small-modal">
                 <div class="modal-header">
-                    <h2><i class="fas fa-upload"></i> Import Options</h2>
-                    <button class="close-btn" onclick="handleImportCancel()" aria-label="Close modal">
+                    <h2 id="importOptionsTitle"><i class="fas fa-upload"></i> Import Options</h2>
+                    <button class="close-btn" onclick="handleImportCancel()">
                         <i class="fas fa-times"></i>
                     </button>
                 </div>
@@ -520,40 +405,34 @@
             </div>
         </div>
 
-        <!-- Footer -->
+
         <footer class="footer">
             <div class="container">
-                <p>TaskMaster Pro v1.4 - Ultimate Edition</p>
                 <p>Developed with ❤️ by <strong>Santosh Phuyal</strong></p>
                 <p class="footer-links">
-                    <a href="#" onclick="showAbout(); return false;">About</a> •
-                    <a href="#" onclick="showHelp(); return false;">Help</a> •
-                    <a href="#" onclick="showPrivacy(); return false;">Privacy</a>
+                    <a href="#" onclick="showAbout()">About</a> •
+                    <a href="#" onclick="showHelp()">Help</a> •
+                    <a href="#" onclick="showPrivacy()">Privacy</a>
                 </p>
             </div>
         </footer>
     </div>
 
-    <!-- Toast Notification -->
     <div id="toast" class="toast hidden"></div>
 
-    <!-- External Libraries -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/idb@7/build/umd.js"></script>
-    
-    <!-- Main App Script -->
     <script src="app.js"></script>
-    
-    <!-- Service Worker Registration -->
     <script>
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', () => {
-                navigator.serviceWorker.register('./service-worker.js')
-                    .then(reg => console.log('✅ Service Worker registered'))
-                    .catch(err => console.log('❌ Service Worker registration failed', err));
+                navigator.serviceWorker.register('./service-worker.js') // Use relative path
+                    .then(reg => console.log('Service Worker registered'))
+                    .catch(err => console.log('Service Worker registration failed', err));
             });
         }
     </script>
 </body>
+
 </html>
