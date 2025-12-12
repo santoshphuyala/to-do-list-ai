@@ -57,18 +57,22 @@
        
 
         <!-- Quick Add Section -->
-<div class="quick-add-container">
-    <input type="text" 
-           id="quickTaskInput" 
-           placeholder="Quick add a task... (Press Enter)"
-           aria-label="Quick add task">
-    <button onclick="quickAddTask()" class="btn btn-primary" aria-label="Add task">
-        <i class="fas fa-plus"></i> Add
-    </button>
-    <button onclick="openAdvancedForm()" class="btn btn-secondary" aria-label="Open advanced form">
-        <i class="fas fa-edit"></i> Advanced
-    </button>
-</div>
+        <div class="quick-add-container">
+            <div class="quick-input-wrapper" role="region" aria-label="Quick add task">
+                <i class="input-icon fas fa-plus-circle" aria-hidden="true"></i>
+                <input type="text"
+                       id="quickTaskInput"
+                       class="quick-task-input"
+                       placeholder="Quick add a task... (Press Enter)"
+                       aria-label="Quick add task">
+                <button onclick="quickAddTask()" class="btn-quick-add" aria-label="Add task">
+                    <i class="fas fa-plus"></i> Quick Add
+                </button>
+                <button onclick="openAdvancedForm()" class="btn-quick-add" aria-label="Open advanced form">
+                    <i class="fas fa-edit"></i> Advanced
+                </button>
+            </div>
+        </div>
 
 <!-- *** NEW: Quick Export/Import Section *** -->
 <div class="quick-export-import-container" style="display: flex; gap: 0.5rem; margin-top: 0.75rem; flex-wrap: wrap;">
@@ -114,7 +118,7 @@
                     <button id="clearSearchBtn" class="clear-search-btn hidden" onclick="clearSearch()" aria-label="Clear search">
                         <i class="fas fa-times"></i>
                     </button>
-                </div>
+                </div><br>
                 
                 <div class="tabs">
                     <button class="tab active" onclick="filterTasks('all')">All</button>
