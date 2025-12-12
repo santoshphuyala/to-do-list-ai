@@ -129,6 +129,34 @@
                     <button class="tab" onclick="filterTasks('completed')">Completed</button>
                 </div>
             </div>
+        </section>
+
+        <section class="tasks-section">
+            <div class="container">
+
+                <div id="bulkActionsContainer" class="bulk-actions-bar hidden">
+                    <div class="select-all-container">
+                        <input type="checkbox" id="selectAllCheckbox" onchange="toggleSelectAll(event)">
+                        <label for="selectAllCheckbox">Select All</label>
+                    </div>
+                    <div class="sort-container">
+                        <label for="sortSelect">Sort By:</label>
+                        <select id="sortSelect" class="form-control">
+                            <option value="order">Manual Order</option>
+                            <option value="priority">Priority</option>
+                            <option value="dueDate">Due Date</option>
+                            <option value="title">Title (A-Z)</option>
+                        </select>
+                    </div>
+                    <button id="deleteSelectedBtn" class="btn btn-danger" onclick="deleteSelectedTasks()" disabled>
+                        Delete Selected (0)
+                    </button>
+                </div>
+
+                <div id="tasksContainer" class="tasks-container" ondragover="handleDragOver(event)" ondrop="handleDrop(event)">
+                </div>
+
+            </div>
 
 <!-- *** NEW: Quick Filters Section *** -->
 <div class="quick-filters-section">
@@ -215,34 +243,6 @@
         Clear Filters
     </button>
 </div>
-        </section>
-
-        <section class="tasks-section">
-            <div class="container">
-
-                <div id="bulkActionsContainer" class="bulk-actions-bar hidden">
-                    <div class="select-all-container">
-                        <input type="checkbox" id="selectAllCheckbox" onchange="toggleSelectAll(event)">
-                        <label for="selectAllCheckbox">Select All</label>
-                    </div>
-                    <div class="sort-container">
-                        <label for="sortSelect">Sort By:</label>
-                        <select id="sortSelect" class="form-control">
-                            <option value="order">Manual Order</option>
-                            <option value="priority">Priority</option>
-                            <option value="dueDate">Due Date</option>
-                            <option value="title">Title (A-Z)</option>
-                        </select>
-                    </div>
-                    <button id="deleteSelectedBtn" class="btn btn-danger" onclick="deleteSelectedTasks()" disabled>
-                        Delete Selected (0)
-                    </button>
-                </div>
-
-                <div id="tasksContainer" class="tasks-container" ondragover="handleDragOver(event)" ondrop="handleDrop(event)">
-                </div>
-
-            </div>
 
 <!-- AI Summary Section -->
 <div class="ai-summary-container">
