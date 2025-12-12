@@ -202,14 +202,17 @@ body {
 }
 
 .quick-input {
-    flex: 1;
-    border: none;
-    padding: 0.75rem 1rem;
-    font-size: 1rem;
-    border-radius: 8px;
+    flex: 1 1 auto;
+    min-width: 300px; /* match search input minimum */
+    min-height: 44px; /* ensures a comfortable click/tap target */
+    border: 2px solid var(--border-color);
+    padding: 0.85rem 1rem;
+    font-size: 1.05rem;
+    border-radius: 10px;
     outline: none;
     background: var(--light-color);
     color: var(--text-primary);
+    transition: var(--transition);
 }
 
 [data-theme="dark"] .quick-input {
@@ -288,6 +291,54 @@ body {
 
 .tabs::-webkit-scrollbar {
     display: none; /* Chrome, Safari */
+}
+
+/* Search */
+.search-container {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    width: 100%;
+    max-width: 900px; /* increase this if you want a wider box */
+    margin: 0;
+}
+
+.search-input {
+    flex: 1 1 60%;
+    min-width: 100px; /* larger minimum width */
+    max-width: 100%;
+       padding: 0.85rem 1rem;
+    font-size: 1.05rem;
+    border: 2px solid var(--border-color);
+    border-radius: 10px;
+    outline: none;
+    transition: var(--transition);
+    background: var(--light-color);
+    color: var(--text-primary);
+    
+}
+
+[data-theme="dark"] .search-input {
+    background: var(--bg-primary);
+    border-color: var(--border-color);
+    color: var(--text-secondary);
+}
+
+.search-input:focus {
+    border-color: var(--primary-color);
+    box-shadow: 0 6px 18px rgba(99,102,241,0.12);
+}
+
+.clear-search-btn {
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    color: var(--text-secondary);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.25rem;
+    font-size: 1rem;
 }
 
 
@@ -1054,6 +1105,7 @@ form {
 
     .quick-add-form {
         flex-wrap: wrap;
+        min-width: 300px;
     }
 
     .quick-input {
@@ -2002,4 +2054,60 @@ form {
 
 [data-theme="dark"] .filter-btn:hover {
     background: rgba(255, 255, 255, 0.1);
+}
+
+/* add to styles.css */
+.quick-add-container.fullscreen {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 300;
+}
+.quick-add-container.fullscreen .quick-add-inner {
+  width: 100%;
+  max-width: 900px;
+  background: var(--light-color);
+  padding: 1.25rem;
+  border-radius: 12px;
+  box-shadow: var(--shadow-lg);
+}
+.quick-add-container.fullscreen .quick-input-wrapper {
+    width: 100%;
+    max-width: 900px;
+    background: var(--light-color);
+    padding: 1.25rem;
+    border-radius: 12px;
+    box-shadow: var(--shadow-lg);
+    display: flex;
+    gap: 0.75rem;
+    align-items: center;
+}
+
+.quick-add-container.fullscreen .quick-task-input,
+.quick-add-container.fullscreen input#quickTaskInput {
+    width: 100%;
+    min-width: 0;
+    padding: 1rem;
+    font-size: 16px;
+    border: none;
+    background: transparent;
+}
+
+.quick-add-container.fullscreen .btn-quick-add,
+.quick-add-container.fullscreen .btn-action,
+.quick-add-container.fullscreen .btn-advanced {
+    flex-shrink: 0;
+}
+
+@media (max-width: 700px) {
+    .quick-add-container.fullscreen .quick-input-wrapper {
+        flex-direction: column;
+        align-items: stretch;
+    }
+    .quick-add-container.fullscreen .quick-task-input {
+        padding: 0.85rem;
+    }
 }
