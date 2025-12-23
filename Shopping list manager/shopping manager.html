@@ -1,0 +1,559 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <meta name="description" content="Smart Shopping List Manager - Organize your shopping with ease">
+    <meta name="author" content="Santosh Phuyal">
+    <meta name="theme-color" content="#4f46e5">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Shop List">
+    
+    <title>Shopping List Manager | By Santosh Phuyal</title>
+    
+    <!-- PWA Manifest -->
+    <link rel="manifest" href="manifest.json">
+    
+    <!-- Favicon -->
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect fill='%234f46e5' width='100' height='100' rx='20'/><text x='50%' y='50%' dominant-baseline='middle' text-anchor='middle' font-size='60'>🛒</text></svg>">
+    <link rel="apple-touch-icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect fill='%234f46e5' width='100' height='100' rx='20'/><text x='50%' y='50%' dominant-baseline='middle' text-anchor='middle' font-size='60'>🛒</text></svg>">
+    
+    <!-- External Libraries -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    
+    <!-- Styles -->
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Header -->
+        <header class="header">
+            <div class="header-left">
+                <h1>🛒 <span id="currentListName">Shopping List</span></h1>
+                <span class="header-date" id="currentDate"></span>
+            </div>
+            <div class="header-actions">
+                <div class="sync-indicator">
+                    <div class="sync-dot" id="syncDot"></div>
+                    <span id="syncStatus">Saved</span>
+                </div>
+                <button class="icon-btn dark-mode-btn" onclick="toggleDarkMode()" title="Toggle Dark Mode" id="darkModeBtn">🌙</button>
+                <button class="icon-btn" onclick="openListsModal()" title="My Lists">📋</button>
+                <div class="dropdown">
+                    <button class="icon-btn" onclick="toggleDropdown(event)" title="Menu">⋮</button>
+                    <div class="dropdown-menu" id="mainDropdown">
+                        <div class="dropdown-item" onclick="openBackupModal()">
+                            <span class="dropdown-item-icon">💾</span>
+                            Backup & Restore
+                        </div>
+                        <div class="dropdown-item" onclick="openTemplatesModal()">
+                            <span class="dropdown-item-icon">📑</span>
+                            Templates
+                        </div>
+                        <div class="dropdown-item" onclick="openCategoriesModal()">
+                            <span class="dropdown-item-icon">🏷️</span>
+                            Manage Categories
+                        </div>
+                        <div class="dropdown-item" onclick="openAnalyticsModal()">
+                            <span class="dropdown-item-icon">📊</span>
+                            Analytics
+                        </div>
+                        <div class="dropdown-divider"></div>
+                        <div class="dropdown-item" onclick="shareList()">
+                            <span class="dropdown-item-icon">🔗</span>
+                            Share List
+                        </div>
+                        <div class="dropdown-item" onclick="openShortcutsModal()">
+                            <span class="dropdown-item-icon">⌨️</span>
+                            Keyboard Shortcuts
+                        </div>
+                        <div class="dropdown-divider"></div>
+                        <div class="dropdown-item" onclick="clearCompleted()">
+                            <span class="dropdown-item-icon">🧹</span>
+                            Clear Completed
+                        </div>
+                        <div class="dropdown-item" onclick="clearAllItems()">
+                            <span class="dropdown-item-icon">🗑️</span>
+                            Clear All Items
+                        </div>
+                        <div class="dropdown-divider"></div>
+                        <div class="dropdown-item" onclick="openAboutModal()">
+                            <span class="dropdown-item-icon">ℹ️</span>
+                            About
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </header>
+
+        <!-- Search Bar -->
+        <div class="search-bar">
+            <div class="search-input-wrapper">
+                <span class="search-icon">🔍</span>
+                <input 
+                    type="text" 
+                    id="searchInput" 
+                    class="search-input" 
+                    placeholder="Search items..."
+                    oninput="handleSearch(this.value)"
+                >
+                <button class="search-clear" id="searchClear" onclick="clearSearch()">✕</button>
+            </div>
+        </div>
+
+        <!-- Quick Add -->
+        <div class="quick-add">
+            <form class="quick-add-form" onsubmit="quickAdd(event)">
+                <input 
+                    type="text" 
+                    id="quickAddInput" 
+                    class="quick-add-input" 
+                    placeholder="Add item... (e.g., 2 kg apples $5)"
+                    autocomplete="off"
+                >
+                <button type="submit" class="quick-add-btn">Add</button>
+            </form>
+            <p class="quick-add-hint">
+                💡 Tip: "2 kg apples $5" or "milk x3 $2.50" for quick entry with price
+            </p>
+        </div>
+
+        <!-- Stats Bar -->
+        <div class="stats-bar">
+            <div class="stat-chip">
+                📝 Total <span class="count" id="totalCount">0</span>
+            </div>
+            <div class="stat-chip">
+                ✅ Done <span class="count" id="doneCount">0</span>
+            </div>
+            <div class="stat-chip">
+                ⏳ Pending <span class="count" id="pendingCount">0</span>
+            </div>
+            <div class="stat-chip budget">
+                💰 Budget <span class="count" id="budgetCount">$0</span>
+            </div>
+        </div>
+
+        <!-- Filters -->
+        <div class="filters">
+            <button class="filter-btn active" data-filter="all" onclick="setFilter('all')">All</button>
+            <button class="filter-btn" data-filter="pending" onclick="setFilter('pending')">Pending</button>
+            <button class="filter-btn" data-filter="completed" onclick="setFilter('completed')">Completed</button>
+            <button class="filter-btn" data-filter="high" onclick="setFilter('high')">🔴 High</button>
+            <button class="filter-btn" data-filter="medium" onclick="setFilter('medium')">🟡 Medium</button>
+        </div>
+
+        <!-- List Container -->
+        <div class="list-container" id="listContainer">
+            <!-- Items will be rendered here -->
+        </div>
+
+        <!-- Footer -->
+        <footer class="app-footer">
+            Developed by <a href="#" onclick="openAboutModal(); return false;">Santosh Phuyal</a> | v2.0
+        </footer>
+    </div>
+
+    <!-- Floating Action Button -->
+    <button class="fab" onclick="openAddModal()" title="Add Item">+</button>
+
+    <!-- Add/Edit Item Modal -->
+    <div class="modal-overlay" id="itemModal">
+        <div class="modal">
+            <div class="modal-header">
+                <h2 id="itemModalTitle">Add Item</h2>
+                <button class="modal-close" onclick="closeModal('itemModal')">×</button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="editItemId">
+                <div class="form-group">
+                    <label for="itemName">Item Name *</label>
+                    <input type="text" id="itemName" class="form-control" placeholder="e.g., Apples" required>
+                </div>
+                <div class="form-row three-cols">
+                    <div class="form-group">
+                        <label for="itemQuantity">Quantity</label>
+                        <input type="text" id="itemQuantity" class="form-control" placeholder="e.g., 2">
+                    </div>
+                    <div class="form-group">
+                        <label for="itemUnit">Unit</label>
+                        <select id="itemUnit" class="form-control">
+                            <option value="">-</option>
+                            <option value="pcs">pcs</option>
+                            <option value="kg">kg</option>
+                            <option value="g">g</option>
+                            <option value="lb">lb</option>
+                            <option value="oz">oz</option>
+                            <option value="L">L</option>
+                            <option value="ml">ml</option>
+                            <option value="dozen">dozen</option>
+                            <option value="pack">pack</option>
+                            <option value="box">box</option>
+                            <option value="bag">bag</option>
+                            <option value="bottle">bottle</option>
+                            <option value="can">can</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="itemPrice">Price ($)</label>
+                        <input type="number" id="itemPrice" class="form-control" placeholder="0.00" step="0.01" min="0">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="itemCategory">Category</label>
+                        <select id="itemCategory" class="form-control">
+                            <!-- Categories will be populated -->
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="itemPriority">Priority</label>
+                        <select id="itemPriority" class="form-control">
+                            <option value="normal">Normal</option>
+                            <option value="low">Low</option>
+                            <option value="medium">Medium</option>
+                            <option value="high">High</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label for="itemNotes">Notes</label>
+                    <input type="text" id="itemNotes" class="form-control" placeholder="Any additional notes...">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeModal('itemModal')">Cancel</button>
+                <button class="btn btn-primary" onclick="saveItem()">💾 Save Item</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Backup Modal -->
+    <div class="modal-overlay" id="backupModal">
+        <div class="modal">
+            <div class="modal-header">
+                <h2>💾 Backup & Restore</h2>
+                <button class="modal-close" onclick="closeModal('backupModal')">×</button>
+            </div>
+            <div class="modal-body">
+                <h3 class="section-title">📤 Export Data</h3>
+                <div class="backup-options">
+                    <div class="backup-option" onclick="exportJSON()">
+                        <div class="backup-option-icon">📄</div>
+                        <div class="backup-option-content">
+                            <h4>Export as JSON</h4>
+                            <p>Full backup including all settings</p>
+                        </div>
+                    </div>
+                    <div class="backup-option" onclick="exportExcel()">
+                        <div class="backup-option-icon">📊</div>
+                        <div class="backup-option-content">
+                            <h4>Export as Excel</h4>
+                            <p>Spreadsheet format for easy viewing</p>
+                        </div>
+                    </div>
+                    <div class="backup-option" onclick="exportIncrementalJSON()">
+                        <div class="backup-option-icon">🔄</div>
+                        <div class="backup-option-content">
+                            <h4>Incremental Backup</h4>
+                            <p>Only changes since last backup</p>
+                        </div>
+                    </div>
+                </div>
+
+                <h3 class="section-title" style="margin-top: 24px;">📥 Import Data</h3>
+                <div class="backup-options">
+                    <div class="backup-option" onclick="document.getElementById('jsonImport').click()">
+                        <div class="backup-option-icon">📥</div>
+                        <div class="backup-option-content">
+                            <h4>Import from JSON</h4>
+                            <p>Restore from JSON backup file</p>
+                        </div>
+                    </div>
+                    <div class="backup-option" onclick="document.getElementById('excelImport').click()">
+                        <div class="backup-option-icon">📈</div>
+                        <div class="backup-option-content">
+                            <h4>Import from Excel</h4>
+                            <p>Import items from Excel file</p>
+                        </div>
+                    </div>
+                </div>
+
+                <input type="file" id="jsonImport" class="hidden-input" accept=".json" onchange="handleJSONImport(event)">
+                <input type="file" id="excelImport" class="hidden-input" accept=".xlsx,.xls" onchange="handleExcelImport(event)">
+
+                <div class="backup-info">
+                    <div class="backup-info-row">
+                        <span>Last backup:</span>
+                        <strong id="lastBackupDate">Never</strong>
+                    </div>
+                    <div class="backup-info-row">
+                        <span>Pending changes:</span>
+                        <strong id="pendingChanges">0 items</strong>
+                    </div>
+                    <div class="backup-info-row">
+                        <span>Total items:</span>
+                        <strong id="totalItemsCount">0</strong>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Import Preview Modal -->
+    <div class="modal-overlay" id="importPreviewModal">
+        <div class="modal">
+            <div class="modal-header">
+                <h2>📥 Import Preview</h2>
+                <button class="modal-close" onclick="closeModal('importPreviewModal')">×</button>
+            </div>
+            <div class="modal-body">
+                <p class="import-description">
+                    Select items to import. Duplicates are marked and will be skipped.
+                </p>
+                <div class="import-summary" id="importSummary"></div>
+                <div class="import-preview" id="importPreviewList">
+                    <!-- Import items will be rendered here -->
+                </div>
+                <div class="import-actions">
+                    <button class="btn btn-secondary btn-sm" onclick="selectAllImport(true)">Select All New</button>
+                    <button class="btn btn-secondary btn-sm" onclick="selectAllImport(false)">Deselect All</button>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeModal('importPreviewModal')">Cancel</button>
+                <button class="btn btn-success" onclick="confirmImport()">✅ Import Selected</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Lists Modal -->
+    <div class="modal-overlay" id="listsModal">
+        <div class="modal">
+            <div class="modal-header">
+                <h2>📋 My Shopping Lists</h2>
+                <button class="modal-close" onclick="closeModal('listsModal')">×</button>
+            </div>
+            <div class="modal-body">
+                <div class="lists-grid" id="listsGrid">
+                    <!-- Lists will be rendered here -->
+                </div>
+                <div style="margin-top: 16px;">
+                    <button class="btn btn-primary" style="width: 100%;" onclick="createNewList()">
+                        ➕ Create New List
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Categories Modal -->
+    <div class="modal-overlay" id="categoriesModal">
+        <div class="modal">
+            <div class="modal-header">
+                <h2>🏷️ Manage Categories</h2>
+                <button class="modal-close" onclick="closeModal('categoriesModal')">×</button>
+            </div>
+            <div class="modal-body">
+                <div class="category-list" id="categoryList">
+                    <!-- Categories will be rendered here -->
+                </div>
+                <div class="add-category-form">
+                    <input type="text" id="newCategoryName" class="form-control" placeholder="Category name">
+                    <input type="text" id="newCategoryIcon" class="form-control icon-input" placeholder="📦" maxlength="2">
+                    <button class="btn btn-primary btn-sm" onclick="addCategory()">Add</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Templates Modal -->
+    <div class="modal-overlay" id="templatesModal">
+        <div class="modal">
+            <div class="modal-header">
+                <h2>📑 Templates</h2>
+                <button class="modal-close" onclick="closeModal('templatesModal')">×</button>
+            </div>
+            <div class="modal-body">
+                <div class="templates-grid" id="templatesGrid">
+                    <!-- Templates will be rendered here -->
+                </div>
+                <div style="margin-top: 16px;">
+                    <button class="btn btn-primary" style="width: 100%;" onclick="saveAsTemplate()">
+                        💾 Save Current List as Template
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Analytics Modal -->
+    <div class="modal-overlay" id="analyticsModal">
+        <div class="modal">
+            <div class="modal-header">
+                <h2>📊 Shopping Analytics</h2>
+                <button class="modal-close" onclick="closeModal('analyticsModal')">×</button>
+            </div>
+            <div class="modal-body">
+                <div class="analytics-section">
+                    <h4>📈 Overview</h4>
+                    <div class="analytics-grid" id="analyticsOverview">
+                        <!-- Analytics cards will be rendered here -->
+                    </div>
+                </div>
+                <div class="analytics-section">
+                    <h4>🏆 Most Added Items</h4>
+                    <div class="top-items-list" id="topItemsList">
+                        <!-- Top items will be rendered here -->
+                    </div>
+                </div>
+                <div class="analytics-section">
+                    <h4>📁 Category Distribution</h4>
+                    <div id="categoryDistribution">
+                        <!-- Category distribution will be rendered here -->
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Share Modal -->
+    <div class="modal-overlay" id="shareModal">
+        <div class="modal">
+            <div class="modal-header">
+                <h2>🔗 Share List</h2>
+                <button class="modal-close" onclick="closeModal('shareModal')">×</button>
+            </div>
+            <div class="modal-body">
+                <p class="share-description">
+                    Share your shopping list with others. They can import it directly!
+                </p>
+                <div class="share-link">
+                    <input type="text" id="shareLink" class="form-control" readonly>
+                    <button class="btn btn-primary btn-sm" onclick="copyShareLink()">📋 Copy</button>
+                </div>
+                <div class="share-actions">
+                    <button class="btn btn-secondary" onclick="nativeShare()">
+                        📤 Share via...
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Shortcuts Modal -->
+    <div class="modal-overlay" id="shortcutsModal">
+        <div class="modal">
+            <div class="modal-header">
+                <h2>⌨️ Keyboard Shortcuts</h2>
+                <button class="modal-close" onclick="closeModal('shortcutsModal')">×</button>
+            </div>
+            <div class="modal-body">
+                <div class="shortcuts-grid">
+                    <div class="shortcut-item">
+                        <span>Add new item</span>
+                        <div class="shortcut-keys">
+                            <span class="shortcut-key">Ctrl</span>
+                            <span class="shortcut-key">N</span>
+                        </div>
+                    </div>
+                    <div class="shortcut-item">
+                        <span>Undo</span>
+                        <div class="shortcut-keys">
+                            <span class="shortcut-key">Ctrl</span>
+                            <span class="shortcut-key">Z</span>
+                        </div>
+                    </div>
+                    <div class="shortcut-item">
+                        <span>Redo</span>
+                        <div class="shortcut-keys">
+                            <span class="shortcut-key">Ctrl</span>
+                            <span class="shortcut-key">Y</span>
+                        </div>
+                    </div>
+                    <div class="shortcut-item">
+                        <span>Search</span>
+                        <div class="shortcut-keys">
+                            <span class="shortcut-key">Ctrl</span>
+                            <span class="shortcut-key">F</span>
+                        </div>
+                    </div>
+                    <div class="shortcut-item">
+                        <span>Toggle Dark Mode</span>
+                        <div class="shortcut-keys">
+                            <span class="shortcut-key">Ctrl</span>
+                            <span class="shortcut-key">D</span>
+                        </div>
+                    </div>
+                    <div class="shortcut-item">
+                        <span>Export JSON</span>
+                        <div class="shortcut-keys">
+                            <span class="shortcut-key">Ctrl</span>
+                            <span class="shortcut-key">S</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- About Modal -->
+    <div class="modal-overlay" id="aboutModal">
+        <div class="modal">
+            <div class="modal-header">
+                <h2>ℹ️ About</h2>
+                <button class="modal-close" onclick="closeModal('aboutModal')">×</button>
+            </div>
+            <div class="modal-body about-content">
+                <div class="about-icon">🛒</div>
+                <h3>Shopping List Manager</h3>
+                <p class="version">Version 2.0</p>
+                
+                <div class="developer-info">
+                    <p>Developed with ❤️ by</p>
+                    <h4>Santosh Phuyal</h4>
+                </div>
+
+                <div class="features-list">
+                    <h4>✨ Features:</h4>
+                    <ul>
+                        <li>📱 Progressive Web App (PWA)</li>
+                        <li>🌙 Dark Mode Support</li>
+                        <li>💾 IndexedDB Storage</li>
+                        <li>📊 Excel & JSON Import/Export</li>
+                        <li>🔄 Undo/Redo Support</li>
+                        <li>📑 List Templates</li>
+                        <li>💰 Price Tracking</li>
+                        <li>📈 Shopping Analytics</li>
+                        <li>🔗 Share Lists</li>
+                        <li>🔀 Drag & Drop Reorder</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Undo Bar -->
+    <div class="undo-bar" id="undoBar">
+        <span class="undo-bar-text" id="undoBarText">Item deleted</span>
+        <button class="undo-bar-btn" onclick="performUndo()">Undo</button>
+    </div>
+
+    <!-- Toast Container -->
+    <div class="toast-container" id="toastContainer"></div>
+
+    <!-- Install PWA Banner -->
+    <div class="install-banner" id="installBanner">
+        <div class="install-banner-text">
+            <h4>Install App</h4>
+            <p>Add to home screen for quick access</p>
+        </div>
+        <button class="install-banner-btn" onclick="installPWA()">Install</button>
+        <button class="install-banner-close" onclick="dismissInstallBanner()">×</button>
+    </div>
+
+    <!-- App Script -->
+    <script src="app.js"></script>
+</body>
+</html>
