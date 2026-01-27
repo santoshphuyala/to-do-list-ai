@@ -46,6 +46,17 @@
                         <button class="icon-btn" onclick="showInsights()" title="Full Insights Report" aria-label="Full Insights Report">
                             <i class="fas fa-chart-line"></i>
                         </button>
+                        <button class="icon-btn" onclick="showQuickExportMenu()" title="Quick Export" aria-label="Quick Export">
+                            <i class="fas fa-file-export"></i>
+                        </button>
+                        <button class="icon-btn" onclick="document.getElementById('quickImportFile').click()" title="Quick Import" aria-label="Quick Import">
+                            <i class="fas fa-file-import"></i>
+                        </button>
+                        <input type="file" 
+                               id="quickImportFile" 
+                               accept=".json,.xlsx" 
+                               onchange="importFile(event)" 
+                               style="display: none;">
                         <button class="icon-btn" onclick="openSettings()" title="Settings" aria-label="Settings">
                             <i class="fas fa-cog"></i>
                         </button> 
@@ -55,6 +66,27 @@
                 </div>
             </div>
         </header>
+
+        <!-- Quick Export Menu (Hidden by default) -->
+        <div id="quickExportMenu" class="quick-export-menu" style="display: none;">
+            <div class="quick-export-content">
+                <h4><i class="fas fa-file-export"></i> Export Tasks</h4>
+                <div class="export-options">
+                    <button onclick="exportToJSON(); hideQuickExportMenu();" class="export-option">
+                        <i class="fas fa-code"></i>
+                        <span>JSON</span>
+                    </button>
+                    <button onclick="exportToExcel(); hideQuickExportMenu();" class="export-option">
+                        <i class="fas fa-file-excel"></i>
+                        <span>Excel</span>
+                    </button>
+                    <button onclick="exportToPDF(); hideQuickExportMenu();" class="export-option">
+                        <i class="fas fa-file-pdf"></i>
+                        <span>PDF</span>
+                    </button>
+                </div>
+            </div>
+        </div>
 
        
 
@@ -76,39 +108,6 @@
             </div>
         </div>
 
-<!-- *** NEW: Quick Export/Import Section *** -->
-<div class="quick-export-import-container" style="display: flex; gap: 0.5rem; margin-top: 0.75rem; flex-wrap: wrap;">
-    <button onclick="showQuickExportMenu()" class="btn btn-secondary" style="flex: 1; min-width: 150px;" aria-label="Quick Export">
-        <i class="fas fa-file-export"></i> Quick Export
-    </button>
-    <button onclick="document.getElementById('quickImportFile').click()" class="btn btn-secondary" style="flex: 1; min-width: 150px;" aria-label="Quick Import">
-        <i class="fas fa-file-import"></i> Quick Import
-    </button>
-    <input type="file" 
-           id="quickImportFile" 
-           accept=".json,.csv,.xlsx" 
-           onchange="importFile(event)" 
-           style="display: none;">
-</div>
-
-<!-- Quick Export Menu (Hidden by default) -->
-<div id="quickExportMenu" class="quick-export-menu" style="display: none; margin-top: 0.5rem; padding: 0.75rem; background: var(--card-bg); border: 2px solid var(--border-color); border-radius: 8px;">
-    <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
-        <button onclick="exportToJSON(); hideQuickExportMenu();" class="btn btn-sm" style="flex: 1;">
-            <i class="fas fa-code"></i> JSON
-        </button>
-        <button onclick="exportToCSV(); hideQuickExportMenu();" class="btn btn-sm" style="flex: 1;">
-            <i class="fas fa-table"></i> CSV
-        </button>
-        <button onclick="exportToExcel(); hideQuickExportMenu();" class="btn btn-sm" style="flex: 1;">
-            <i class="fas fa-file-excel"></i> Excel
-        </button>
-        <button onclick="exportToPDF(); hideQuickExportMenu();" class="btn btn-sm" style="flex: 1;">
-            <i class="fas fa-file-pdf"></i> PDF
-        </button>
-    </div>
-</div>
-
         </section>
 
         <section class="filter-section">
@@ -123,15 +122,135 @@
                 </div><br>
                 
                 <div class="tabs">
-                    <button class="tab active" onclick="filterTasks('all')">All</button>
-                    <button class="tab" onclick="filterTasks('personal')">Personal</button>
-                    <button class="tab" onclick="filterTasks('office')">Office</button>
-                    <button class="tab" onclick="filterTasks('misc')">Misc</button>
-                    <button class="tab" onclick="filterTasks('recurring')">Recurring</button>
-                    <button class="tab" onclick="filterTasks('completed')">Completed</button>
+                    <div class="main-tabs">
+                        <button class="tab active" onclick="filterTasks('all')">All</button>
+                        <button class="tab" onclick="filterTasks('personal')">Personal</button>
+                        <button class="tab" onclick="filterTasks('office')">Office</button>
+                        <button class="tab" onclick="filterTasks('misc')">Misc</button>
+                        <button class="tab" onclick="filterTasks('recurring')">Recurring</button>
+                    </div>
+                    <div class="tab-separator"></div>
+                    <div class="completed-tabs">
+                        <button class="tab completed-tab" onclick="filterTasks('completed')">Completed</button>
+                    </div>
                 </div>
             </div>
         </section>
+
+        <!-- *** NEW: Quick Filters Section *** -->
+        <div class="quick-filters-section">
+            <div class="filter-group">
+                <div class="filter-group-header">
+                    <i class="fas fa-calendar-check"></i>
+                    <span>Quick Filters</span>
+                </div>
+                <div class="filter-buttons">
+                    <button class="filter-btn" 
+                            id="filter-overdue" 
+                            onclick="applyQuickFilter('overdue')"
+                            title="Show overdue tasks">
+                        <i class="fas fa-exclamation-triangle"></i>
+                        <span>Overdue</span>
+                        <span class="filter-count" id="count-overdue">0</span>
+                    </button>
+                    <button class="filter-btn" 
+                            id="filter-today" 
+                            onclick="applyQuickFilter('today')"
+                            title="Show today's tasks">
+                        <i class="fas fa-calendar-day"></i>
+                        <span>Today</span>
+                        <span class="filter-count" id="count-today">0</span>
+                    </button>
+                    <button class="filter-btn" 
+                            id="filter-week" 
+                            onclick="applyQuickFilter('week')"
+                            title="Show this week's tasks">
+                        <i class="fas fa-calendar-week"></i>
+                        <span>This Week</span>
+                        <span class="filter-count" id="count-week">0</span>
+                    </button>
+                </div>
+            </div>
+            
+            <div class="filter-group">
+                <div class="filter-group-header">
+                    <i class="fas fa-flag"></i>
+                    <span>Priority Filters</span>
+                </div>
+                <div class="filter-buttons">
+                    <button class="filter-btn priority-urgent" 
+                            id="filter-urgent" 
+                            onclick="applyPriorityFilter('urgent')"
+                            title="Show urgent tasks">
+                        <i class="fas fa-fire"></i>
+                        <span>Urgent</span>
+                        <span class="filter-count" id="count-urgent">0</span>
+                    </button>
+                    <button class="filter-btn priority-high" 
+                            id="filter-high" 
+                            onclick="applyPriorityFilter('high')"
+                            title="Show high priority tasks">
+                        <i class="fas fa-arrow-up"></i>
+                        <span>High</span>
+                        <span class="filter-count" id="count-high">0</span>
+                    </button>
+                    <button class="filter-btn priority-medium" 
+                            id="filter-medium" 
+                            onclick="applyPriorityFilter('medium')"
+                            title="Show medium priority tasks">
+                        <i class="fas fa-minus"></i>
+                        <span>Medium</span>
+                        <span class="filter-count" id="count-medium">0</span>
+                    </button>
+                    <button class="filter-btn priority-low" 
+                            id="filter-low" 
+                            onclick="applyPriorityFilter('low')"
+                            title="Show low priority tasks">
+                        <i class="fas fa-arrow-down"></i>
+                        <span>Low</span>
+                        <span class="filter-count" id="count-low">0</span>
+                    </button>
+                </div>
+            </div>
+            
+            <button class="clear-filters-btn" 
+                    id="clearFiltersBtn" 
+                    onclick="clearQuickFilters()"
+                    style="display: none;"
+                    title="Clear all filters">
+                <i class="fas fa-times-circle"></i>
+                Clear Filters
+            </button>
+        </div>
+
+        <!-- Page Size Selector and Undo/Redo Controls -->
+        <div class="controls-top-container">
+            <div class="controls-left">
+                <div class="page-size-selector-top">
+                    <label for="pageSizeSelectTop">Tasks per page:</label>
+                    <select id="pageSizeSelectTop" class="form-control" onchange="changePageSizeTop()">
+                        <option value="10">10</option>
+                        <option value="20">20</option>
+                        <option value="30">30</option>
+                        <option value="50">50</option>
+                        <option value="100">100</option>
+                    </select>
+                </div>
+            </div>
+            <div class="controls-right">
+                <div class="undo-redo-controls">
+                    <button id="undoBtn" class="btn btn-secondary btn-sm" onclick="undo()" disabled title="Undo (Ctrl+Z)">
+                        <i class="fas fa-undo"></i>
+                    </button>
+                    <button id="redoBtn" class="btn btn-secondary btn-sm" onclick="redo()" disabled title="Redo (Ctrl+Y)">
+                        <i class="fas fa-redo"></i>
+                    </button>
+                    <span class="auto-save-indicator" id="autoSaveIndicator">
+                        <i class="fas fa-check-circle"></i> Auto-saved
+                    </span>
+                </div>
+            </div>
+        </div>
 
         <section class="tasks-section">
             <div class="container">
@@ -155,110 +274,49 @@
                     </button>
                 </div>
 
-                <div id="tasksContainer" class="tasks-container" ondragover="handleDragOver(event)" ondrop="handleDrop(event)">
+                <div id="tasksContainer" class="tasks-table-container" ondragover="handleDragOver(event)" ondrop="handleDrop(event)">
+                    <table class="tasks-table">
+                        <thead>
+                            <tr>
+                                <th class="checkbox-column">
+                                    <input type="checkbox" id="selectAllCheckbox" onchange="toggleSelectAll(event)">
+                                </th>
+                                <th class="title-column">Task</th>
+                                <th class="category-column">Category</th>
+                                <th class="priority-column">Priority</th>
+                                <th class="due-date-column">Due Date</th>
+                                <th class="actions-column">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="tasksTableBody">
+                            <!-- Tasks will be rendered here -->
+                        </tbody>
+                    </table>
+                    
+                    <!-- Pagination Controls -->
+                    <div class="pagination-container" id="paginationContainer">
+                        <div class="pagination-info">
+                            <span id="paginationInfo">Showing 1-10 of 0 tasks</span>
+                        </div>
+                        <div class="pagination-controls">
+                            <div class="pagination-buttons">
+                                <button id="prevPageBtn" class="btn btn-secondary" onclick="goToPreviousPage()" disabled>
+                                    <i class="fas fa-chevron-left"></i> Previous
+                                </button>
+                                <div class="page-numbers" id="pageNumbers">
+                                    <!-- Page numbers will be generated here -->
+                                </div>
+                                <button id="nextPageBtn" class="btn btn-secondary" onclick="goToNextPage()" disabled>
+                                    Next <i class="fas fa-chevron-right"></i>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
                 </div>
 
             </div>
 
-<!-- *** NEW: Quick Filters Section *** -->
-<div class="quick-filters-section">
-    <div class="filter-group">
-        <div class="filter-group-header">
-            <i class="fas fa-calendar-check"></i>
-            <span>Quick Filters</span>
-        </div>
-        <div class="filter-buttons">
-            <button class="filter-btn" 
-                    id="filter-overdue" 
-                    onclick="applyQuickFilter('overdue')"
-                    title="Show overdue tasks">
-                <i class="fas fa-exclamation-triangle"></i>
-                <span>Overdue</span>
-                <span class="filter-count" id="count-overdue">0</span>
-            </button>
-            <button class="filter-btn" 
-                    id="filter-today" 
-                    onclick="applyQuickFilter('today')"
-                    title="Show today's tasks">
-                <i class="fas fa-calendar-day"></i>
-                <span>Today</span>
-                <span class="filter-count" id="count-today">0</span>
-            </button>
-            <button class="filter-btn" 
-                    id="filter-week" 
-                    onclick="applyQuickFilter('week')"
-                    title="Show this week's tasks">
-                <i class="fas fa-calendar-week"></i>
-                <span>This Week</span>
-                <span class="filter-count" id="count-week">0</span>
-            </button>
-        </div>
-    </div>
-    
-    <div class="filter-group">
-        <div class="filter-group-header">
-            <i class="fas fa-flag"></i>
-            <span>Priority Filters</span>
-        </div>
-        <div class="filter-buttons">
-            <button class="filter-btn priority-urgent" 
-                    id="filter-urgent" 
-                    onclick="applyPriorityFilter('urgent')"
-                    title="Show urgent tasks">
-                <i class="fas fa-fire"></i>
-                <span>Urgent</span>
-                <span class="filter-count" id="count-urgent">0</span>
-            </button>
-            <button class="filter-btn priority-high" 
-                    id="filter-high" 
-                    onclick="applyPriorityFilter('high')"
-                    title="Show high priority tasks">
-                <i class="fas fa-arrow-up"></i>
-                <span>High</span>
-                <span class="filter-count" id="count-high">0</span>
-            </button>
-            <button class="filter-btn priority-medium" 
-                    id="filter-medium" 
-                    onclick="applyPriorityFilter('medium')"
-                    title="Show medium priority tasks">
-                <i class="fas fa-minus"></i>
-                <span>Medium</span>
-                <span class="filter-count" id="count-medium">0</span>
-            </button>
-            <button class="filter-btn priority-low" 
-                    id="filter-low" 
-                    onclick="applyPriorityFilter('low')"
-                    title="Show low priority tasks">
-                <i class="fas fa-arrow-down"></i>
-                <span>Low</span>
-                <span class="filter-count" id="count-low">0</span>
-            </button>
-        </div>
-    </div>
-    
-    <button class="clear-filters-btn" 
-            id="clearFiltersBtn" 
-            onclick="clearQuickFilters()"
-            style="display: none;"
-            title="Clear all filters">
-        <i class="fas fa-times-circle"></i>
-        Clear Filters
-    </button>
-</div>
-
-<!-- AI Summary Section -->
-<div class="ai-summary-container">
-    <div class="ai-summary-header">
-        <h3><i class="fas fa-brain"></i> AI Insights</h3>
-        <button id="toggleSummaryBtn" onclick="toggleAISummary()" title="Toggle Insights">
-            <i class="fas fa-chevron-up"></i>
-        </button>
-    </div>
-    <div id="aiSummaryContent" class="ai-summary-content">
-        <!-- AI insights will be rendered here -->
-    </div>
-</div>
-        </section>
+        <section class="tasks-section">
 
         <div id="taskModal" class="modal hidden">
             <div class="modal-content">
@@ -424,10 +482,7 @@
                     
                     <div class="import-export-section">
                         <button onclick="exportToJSON()" class="btn btn-secondary">
-                            <i class="fas fa-download"></i> Export to JSON
-                        </button>
-                        <button onclick="exportToCSV()" class="btn btn-secondary">
-                            <i class="fas fa-file-csv"></i> Export to CSV
+                            <i class="fas fa-file-code"></i> Export to JSON
                         </button>
                         <button onclick="exportToExcel()" class="btn btn-secondary">
                             <i class="fas fa-file-excel"></i> Export to Excel
@@ -443,7 +498,7 @@
                             <label for="importFile" class="btn btn-primary">
                                 <i class="fas fa-upload"></i> Import File
                             </label>
-                            <input type="file" id="importFile" accept=".json,.csv,.xlsx" onchange="importFile(event)" style="display: none;">
+                            <input type="file" id="importFile" accept=".json,.xlsx" onchange="importFile(event)" style="display: none;">
                         </div>
                     </div>
 
@@ -455,35 +510,119 @@
         </div>
 
         <div id="importOptionsModal" class="modal hidden">
-            <div class="modal-content small-modal">
+            <div class="modal-content large-modal">
                 <div class="modal-header">
-                    <h2 id="importOptionsTitle"><i class="fas fa-upload"></i> Import Options</h2>
+                    <h2 id="importOptionsTitle"><i class="fas fa-upload"></i> Smart Import Preview</h2>
                     <button class="close-btn" onclick="handleImportCancel()">
                         <i class="fas fa-times"></i>
                     </button>
                 </div>
                 <div class="settings-content" style="padding: 1.5rem;">
-                    <p id="importOptionsMessage" style="margin-bottom: 1.5rem; line-height: 1.6;">
-                        Your file contains <strong>X task(s)</strong>. How would you like to import them?
-                    </p>
+                    <div class="import-summary">
+                        <div class="import-stats">
+                            <div class="stat-item">
+                                <i class="fas fa-file-alt"></i>
+                                <span class="stat-label">File Type:</span>
+                                <span class="stat-value" id="fileType">JSON</span>
+                            </div>
+                            <div class="stat-item">
+                                <i class="fas fa-tasks"></i>
+                                <span class="stat-label">Total Tasks:</span>
+                                <span class="stat-value" id="totalTasks">0</span>
+                            </div>
+                            <div class="stat-item">
+                                <i class="fas fa-plus-circle"></i>
+                                <span class="stat-label">New Tasks:</span>
+                                <span class="stat-value new-tasks" id="newTasksCount">0</span>
+                            </div>
+                            <div class="stat-item">
+                                <i class="fas fa-copy"></i>
+                                <span class="stat-label">Duplicates:</span>
+                                <span class="stat-value duplicate-tasks" id="duplicateTasksCount">0</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="import-preview-section">
+                        <h4><i class="fas fa-eye"></i> Task Preview</h4>
+                        <div class="preview-controls">
+                            <label>
+                                <input type="checkbox" id="showDuplicatesOnly" onchange="filterPreview()">
+                                Show duplicates only
+                            </label>
+                            <label>
+                                <input type="checkbox" id="showNewOnly" onchange="filterPreview()">
+                                Show new tasks only
+                            </label>
+                        </div>
+                        <div class="preview-table-container">
+                            <table class="preview-table" id="previewTable">
+                                <thead>
+                                    <tr>
+                                        <th>Status</th>
+                                        <th>Title</th>
+                                        <th>Category</th>
+                                        <th>Priority</th>
+                                        <th>Due Date</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="previewTableBody">
+                                    <!-- Preview rows will be added here -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
                     <div class="import-options-grid">
-                        
                         <button class="import-option-btn merge-btn" onclick="handleImportMerge()">
                             <i class="fas fa-plus-circle option-icon" style="color: #22c55e;"></i>
-                            <span class="option-title">Merge</span>
-                            <span class="option-desc">Adds new tasks from the file and skips duplicates.</span>
+                            <span class="option-title">Incremental Import</span>
+                            <span class="option-desc">Add only new tasks, skip duplicates.</span>
                             <span class="option-info" id="mergeInfo">
-                                <strong>X</strong> new, <strong>Y</strong> duplicates found.
+                                <strong id="newCount">0</strong> new tasks will be added.
+                            </span>
+                        </button>
+
+                        <button class="import-option-btn update-btn" onclick="handleImportUpdate()">
+                            <i class="fas fa-sync option-icon" style="color: #3b82f6;"></i>
+                            <span class="option-title">Update Existing</span>
+                            <span class="option-desc">Update duplicates and add new tasks.</span>
+                            <span class="option-info" id="updateInfo">
+                                <strong id="updateCount">0</strong> updated, <strong id="newUpdateCount">0</strong> added.
                             </span>
                         </button>
 
                         <button class="import-option-btn overwrite-btn" onclick="handleImportOverwrite()">
                             <i class="fas fa-exclamation-triangle option-icon" style="color: #ef4444;"></i>
-                            <span class="option-title">Overwrite</span>
-                            <span class="option-desc">Deletes all current tasks and replaces them with tasks from the file.</span>
+                            <span class="option-title">Replace All</span>
+                            <span class="option-desc">Delete all current tasks and replace with file.</span>
                             <span class="option-warning">
                                 <i class="fas fa-exclamation-circle"></i> This cannot be undone.
                             </span>
+                        </button>
+                    </div>
+
+                    <div class="duplicate-resolution-options">
+                        <h4><i class="fas fa-cogs"></i> Duplicate Detection Settings</h4>
+                        <div class="resolution-settings">
+                            <label>
+                                <input type="checkbox" id="matchTitle" checked>
+                                Match by title
+                            </label>
+                            <label>
+                                <input type="checkbox" id="matchCategory" checked>
+                                Match by category
+                            </label>
+                            <label>
+                                <input type="checkbox" id="matchPriority">
+                                Match by priority
+                            </label>
+                            <label>
+                                <input type="checkbox" id="matchDueDate">
+                                Match by due date
+                            </label>
+                        </div>
+                    </div>
                         </button>
 
                         <button class="import-option-btn cancel-btn" onclick="handleImportCancel()">
@@ -515,7 +654,7 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/idb@7/build/umd.js"></script>
-    <script src="app.js"></script>
+    <script src="app.js?v=5.2"></script>
     <script>
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', () => {

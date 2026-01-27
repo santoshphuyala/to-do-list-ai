@@ -39,6 +39,23 @@ let currentSort = 'dueDate'; // *** UPDATED: Default sort is nearest due date
 let currentSearch = ''; // *** NEW: Search state
 let activeQuickFilter = null; // *** NEW: Active quick filter (overdue, today, week)
 let activePriorityFilter = null; // *** NEW: Active priority filter (urgent, high, medium, low)
+
+// *** NEW: Pagination State ***
+let currentPage = 1;
+let pageSize = 10;
+let totalTasks = 0;
+let totalPages = 0;
+
+// *** NEW: Undo/Redo State ***
+let history = [];
+let historyIndex = -1;
+const maxHistorySize = 50;
+
+// *** NEW: Auto-save State ***
+let autoSaveTimer = null;
+let autoSaveDelay = 2000; // 2 seconds
+let hasUnsavedChanges = false;
+
 let settings = {
     id: 'main-settings', // *** NEW: Key for IndexedDB settings object
     defaultCategory: 'personal',
@@ -59,6 +76,11 @@ document.addEventListener('DOMContentLoaded', async function() {
         await initDB();
         await loadSettings();
         await loadTasks();
+        
+        // *** NEW: Initialize history with initial state ***
+        if (history.length === 0) {
+            saveToHistory('Initial state');
+        }
         
         applyTheme();
         checkPinProtection();
@@ -103,10 +125,17 @@ function setupEventListeners() {
         }
     });
 
-    document.querySelector('.ai-summary-header').addEventListener('click', toggleAISummary);
+    // AI Summary toggle listener (if element exists)
+    const aiSummaryHeader = document.querySelector('.ai-summary-header');
+    if (aiSummaryHeader) {
+        aiSummaryHeader.addEventListener('click', toggleAISummary);
+    }
     
     // Listener for the sort dropdown
-    document.getElementById('sortSelect').addEventListener('change', (e) => setSortOption(e.target.value));
+    const sortSelect = document.getElementById('sortSelect');
+    if (sortSelect) {
+        sortSelect.addEventListener('change', (e) => setSortOption(e.target.value));
+    }
     
     // *** NEW: Search input listener ***
     const searchInput = document.getElementById('searchInput');
@@ -115,9 +144,25 @@ function setupEventListeners() {
         searchInput.addEventListener('input', (e) => {
             currentSearch = e.target.value.toLowerCase();
             if(clearSearchBtn) clearSearchBtn.classList.toggle('hidden', !currentSearch);
+            // Reset pagination when searching
+            currentPage = 1;
             renderTasks();
         });
     }
+    
+    // *** NEW: Keyboard shortcuts for undo/redo ***
+    document.addEventListener('keydown', function(e) {
+        // Ctrl+Z for undo
+        if (e.ctrlKey && e.key === 'z' && !e.shiftKey) {
+            e.preventDefault();
+            undo();
+        }
+        // Ctrl+Y or Ctrl+Shift+Z for redo
+        if ((e.ctrlKey && e.key === 'y') || (e.ctrlKey && e.shiftKey && e.key === 'z')) {
+            e.preventDefault();
+            redo();
+        }
+    });
     
     // *** NEW: URL Hash change listener for filters ***
     window.addEventListener('hashchange', handleHashChange);
@@ -162,6 +207,8 @@ function clearSearch() {
     currentSearch = '';
     const clearSearchBtn = document.getElementById('clearSearchBtn');
     if(clearSearchBtn) clearSearchBtn.classList.add('hidden');
+    // Reset pagination when clearing search
+    currentPage = 1;
     renderTasks();
 }
 
@@ -173,21 +220,21 @@ function clearSearch() {
 function applyQuickFilter(filterType) {
     const btn = document.getElementById(`filter-${filterType}`);
     
-    // Toggle filter
+    // Toggle the filter
     if (activeQuickFilter === filterType) {
         activeQuickFilter = null;
         btn.classList.remove('active');
     } else {
         // Remove previous active filter
         if (activeQuickFilter) {
-            const prevBtn = document.getElementById(`filter-${activeQuickFilter}`);
-            if (prevBtn) prevBtn.classList.remove('active');
+            document.getElementById(`filter-${activeQuickFilter}`).classList.remove('active');
         }
-        
         activeQuickFilter = filterType;
         btn.classList.add('active');
     }
     
+    // Reset pagination when applying quick filter
+    currentPage = 1;
     updateClearFiltersButton();
     renderTasks();
 }
@@ -213,6 +260,8 @@ function applyPriorityFilter(priority) {
         btn.classList.add('active');
     }
     
+    // Reset pagination when applying priority filter
+    currentPage = 1;
     updateClearFiltersButton();
     renderTasks();
 }
@@ -235,6 +284,8 @@ function clearQuickFilters() {
         activePriorityFilter = null;
     }
     
+    // Reset pagination when clearing filters
+    currentPage = 1;
     updateClearFiltersButton();
     renderTasks();
 }
@@ -467,6 +518,7 @@ async function quickAddTask() {
     };
     
     tasks.push(task);
+    saveToHistory('Quick add task: ' + title);
     await saveTasks(); // *** UPDATED: Await DB save
     renderTasks();
     renderAISummary(); 
@@ -509,6 +561,11 @@ function openSubtaskForm(parentId) {
 function closeTaskModal() {
     document.getElementById('taskModal').classList.add('hidden');
     currentEditingTask = null;
+    
+    // Reset form and parent ID
+    document.getElementById('taskForm').reset();
+    document.getElementById('taskParentId').value = '';
+    document.getElementById('modalTitle').textContent = 'Add New Task';
     
     // *** NEW: a11y focus management ***
     if (lastFocusedElement) {
@@ -590,6 +647,7 @@ async function saveTask(event) {
             parentId: parentId, // *** NEW
         };
         tasks.push(task);
+        saveToHistory('Added task: ' + title);
         showToast('Task added successfully', 'success');
     }
     
@@ -877,6 +935,8 @@ async function toggleTask(taskId) {
 function filterTasks(filter) {
     // *** UPDATED: Set URL Hash, which triggers handleHashChange() ***
     window.location.hash = filter;
+    // Reset pagination when filter changes
+    currentPage = 1;
 }
 
 // NEW: Sort Logic
@@ -886,10 +946,26 @@ function setSortOption(sortKey) {
     renderTasks();
 }
 
-// *** MAJORLY UPDATED: renderTasks for Search, Subtasks, and Drag/Drop ***
+// *** MAJORLY UPDATED: renderTasks for Tabular Layout with Pagination ***
 function renderTasks() {
-    const container = document.getElementById('tasksContainer');
+    try {
+        console.log('renderTasks called - checking table structure');
+        const tableBody = document.getElementById('tasksTableBody');
+        const paginationContainer = document.getElementById('paginationContainer');
+        
+        console.log('tableBody:', tableBody, 'paginationContainer:', paginationContainer);
+        
+        // Check if elements exist - if not, this might be the old structure
+        if (!tableBody || !paginationContainer) {
+            console.warn('New table structure not found, falling back to container-based rendering');
+            renderTasksFallback();
+            return;
+        }
+    
     const bulkActionsContainer = document.getElementById('bulkActionsContainer');
+    if (!bulkActionsContainer) {
+        console.warn('Bulk actions container not found');
+    }
     
     let processedTasks = tasks;
     
@@ -934,13 +1010,16 @@ function renderTasks() {
     // 2. Apply Tab Filter (e.g., 'all', 'personal', 'completed')
     let filteredTasks = [];
     if (currentSearch) {
-        // If searching, just use the search results (no 15-day filter during search)
+        // If searching, use search results but exclude completed tasks unless in completed tab
         filteredTasks = processedTasks;
+        if (currentFilter !== 'completed') {
+            filteredTasks = filteredTasks.filter(t => !t.completed);
+        }
     } else if (currentFilter === 'all') {
-        // *** UPDATED: In 'all' tab, hide repetitive tasks not due within 15 days ***
+        // *** UPDATED: In 'all' tab, hide completed tasks and show repetitive tasks only if due within 15 days ***
         filteredTasks = processedTasks.filter(t => {
-            // Always show completed tasks
-            if (t.completed) return true;
+            // Don't show completed tasks in main tabs
+            if (t.completed) return false;
             
             // For repetitive/recurring tasks, only show if due within 15 days
             if (t.repeat) {
@@ -954,10 +1033,10 @@ function renderTasks() {
         // Show all completed tasks (no filtering)
         filteredTasks = processedTasks.filter(t => t.completed);
     } else if (currentFilter === 'recurring') {
-        // *** UNCHANGED: Recurring tab always shows ALL repetitive tasks ***
+        // *** UPDATED: Recurring tab shows only uncompleted repetitive tasks ***
         filteredTasks = processedTasks.filter(t => !t.completed && t.repeat);
     } else {
-        // *** UPDATED: Category filters also apply 15-day horizon for repetitive tasks ***
+        // *** UPDATED: Category filters exclude completed tasks and apply 15-day horizon for repetitive tasks ***
         filteredTasks = processedTasks.filter(t => {
             // Only show tasks in the current category
             if (t.category !== currentFilter) return false;
@@ -975,7 +1054,35 @@ function renderTasks() {
         });
     }
 
-    // 3. Build Task Tree (for subtasks)
+    // 4. Apply Sorting
+    const sortTasks = (taskList, sortBy) => {
+        return taskList.sort((a, b) => {
+            // Always sort completed tasks below pending tasks
+            if (a.completed !== b.completed) {
+                return a.completed ? 1 : -1;
+            }
+            
+            switch (sortBy) {
+                case 'priority':
+                    const priorityOrder = { urgent: 0, high: 1, medium: 2, low: 3 };
+                    return priorityOrder[a.priority] - priorityOrder[b.priority];
+                case 'dueDate':
+                    if (!a.dueDate && !b.dueDate) return 0;
+                    if (!a.dueDate) return 1;
+                    if (!b.dueDate) return -1;
+                    return new Date(a.dueDate) - new Date(b.dueDate);
+                case 'title':
+                    return a.title.localeCompare(b.title);
+                case 'order':
+                default:
+                    return (a.order || 0) - (b.order || 0);
+            }
+        });
+    };
+    
+    filteredTasks = sortTasks(filteredTasks, currentSort);
+    
+    // 5. Build Task Tree (for subtasks)
     const taskMap = new Map(filteredTasks.map(task => [task.id, { ...task, children: [] }]));
     const taskTree = [];
     
@@ -989,261 +1096,830 @@ function renderTasks() {
         }
     }
     
-    // 4. Apply Sort (with completed tasks always below pending)
-    const sortTasks = (taskList) => {
-        taskList.sort((a, b) => {
-            // *** NEW: Always sort completed tasks below pending tasks ***
-            if (a.completed !== b.completed) {
-                return a.completed ? 1 : -1; // Pending (false) comes first
-            }
-            
-            const priorityOrder = { urgent: 0, high: 1, medium: 2, low: 3 };
-            let comparison = 0;
-
-            switch (currentSort) {
-                case 'priority':
-                    comparison = priorityOrder[a.priority] - priorityOrder[b.priority];
-                    break;
-                case 'dueDate':
-                    // *** UPDATED: Tasks without due dates go to the end ***
-                    const dateA = a.dueDate ? new Date(a.dueDate).getTime() : Infinity;
-                    const dateB = b.dueDate ? new Date(b.dueDate).getTime() : Infinity;
-                    comparison = dateA - dateB;
-                    break;
-                case 'title':
-                    comparison = a.title.localeCompare(b.title);
-                    break;
-                case 'order':
-                    comparison = (a.order || 0) - (b.order || 0);
-                    break;
-                case 'creationDate':
-                    comparison = new Date(b.createdAt) - new Date(a.createdAt); // Newest first
-                    break;
-            }
-            // Fallback sort: if comparison is 0, use due date, then manual order
-            if (comparison !== 0) return comparison;
-            
-            // Secondary sort by due date
-            const dateA = a.dueDate ? new Date(a.dueDate).getTime() : Infinity;
-            const dateB = b.dueDate ? new Date(b.dueDate).getTime() : Infinity;
-            if (dateA !== dateB) return dateA - dateB;
-            
-            // Tertiary sort by manual order
-            return (a.order || 0) - (b.order || 0);
-        });
-        
-        // Recursively sort children
-        taskList.forEach(task => {
+    // Flatten the tree for table display with indentation
+    const flattenedTasks = [];
+    const flattenTasks = (tasks, level = 0) => {
+        for (const task of tasks) {
+            task.level = level;
+            flattenedTasks.push(task);
             if (task.children && task.children.length > 0) {
-                sortTasks(task.children);
-            }
-        });
-    };
-    
-    sortTasks(taskTree);
-
-    // 5. Render Bulk Actions UI
-    if (filteredTasks.length > 0) { // Base this on total filtered tasks, not just top level
-        bulkActionsContainer.classList.remove('hidden');
-        bulkActionsContainer.querySelector('#selectAllCheckbox').checked = false;
-        bulkActionsContainer.querySelector('#selectAllCheckbox').indeterminate = false;
-        document.getElementById('sortSelect').value = currentSort;
-    } else {
-        bulkActionsContainer.classList.add('hidden');
-        selectedTasks.clear();
-    }
-    
-    // 6. Render HTML
-    if (taskTree.length === 0) {
-        let message = "No tasks found";
-        let subMessage = "Add a new task to get started!";
-        
-        if (currentSearch) {
-             message = "No tasks match your search";
-             subMessage = "Try searching for a different term.";
-        } else {
-            switch (currentFilter) {
-                case 'completed':
-                    message = "No completed tasks";
-                    subMessage = "Get to work and check some tasks off your list!";
-                    break;
-                case 'recurring':
-                    message = "No pending recurring tasks";
-                    subMessage = "Create a task and check 'Repetitive Task' to add one.";
-                    break;
-                case 'all':
-                    message = "Task list empty";
-                    subMessage = "Add a new task to your list!";
-                    break;
-                 default:
-                    message = `No tasks in '${capitalize(currentFilter)}'`;
-                    subMessage = "Add a new task to this category.";
+                flattenTasks(task.children, level + 1);
             }
         }
-        
-        container.innerHTML = `
-            <div class="empty-state">
-                <i class="fas fa-inbox"></i>
-                <h3>${message}</h3>
-                <p>${subMessage}</p>
-            </div>
+    };
+    flattenTasks(taskTree);
+    
+    // Apply pagination to flattened tasks
+    const startIndex = (currentPage - 1) * pageSize;
+    const endIndex = startIndex + pageSize;
+    const paginatedTasks = flattenedTasks.slice(startIndex, endIndex);
+    
+    // 5. Render Table Rows
+    if (paginatedTasks.length === 0) {
+        tableBody.innerHTML = `
+            <tr>
+                <td colspan="6" style="text-align: center; padding: 2rem; color: var(--text-secondary);">
+                    <i class="fas fa-inbox" style="font-size: 2rem; margin-bottom: 0.5rem; display: block;"></i>
+                    ${totalTasks === 0 ? 'No tasks found' : 'No tasks on this page'}
+                </td>
+            </tr>
         `;
+    } else {
+        tableBody.innerHTML = paginatedTasks.map(task => renderTaskTableRow(task)).join('');
+    }
+    
+    // 6. Render Pagination Controls
+    renderPaginationControls();
+    
+    // 7. Update UI Elements
+    updateBulkActionUI();
+    updateFilterCounts();
+    
+    } catch (error) {
+        console.error('Error in renderTasks:', error);
+        renderTasksFallback();
+    }
+}
+
+// *** NEW: Fallback renderTasks function for old structure ***
+function renderTasksFallback() {
+    const container = document.getElementById('tasksContainer');
+    if (!container) {
+        console.error('Tasks container not found');
         return;
     }
     
-    // *** ENHANCED: Recursive render function with collapsible subtasks ***
-    const renderTaskHTML = (task, level) => {
-        // Limit nesting visualization
-        const displayLevel = Math.min(level, 3);
-        const subtaskClass = displayLevel > 0 ? `subtask subtask-level-${displayLevel}` : '';
-        // Disable drag/drop if sorting is not manual, if searching, or if it's a subtask
-        const draggable = (currentSort === 'order' && !currentSearch && displayLevel === 0) ? 'true' : 'false';
-        
-        // *** NEW: Check if task has children ***
-        const hasChildren = task.children && task.children.length > 0;
-        const isCollapsed = task.collapsed || false; // Track collapse state
-        
-        // *** NEW: Different styling for subtasks ***
-        const subtaskTitleStyle = displayLevel > 0 ? 'color: var(--text-secondary); font-size: 0.95rem;' : '';
-        const subtaskBorderStyle = displayLevel > 0 ? 'border-left: 3px solid var(--primary-color); padding-left: 0.5rem;' : '';
-        
-        let html = `
-        <div class="task-card ${task.completed ? 'completed' : ''} ${subtaskClass}" 
-             data-task-id="${task.id}" 
-             draggable="${draggable}"
-             ondragstart="handleDragStart(event)"
-             style="${subtaskBorderStyle}">
-            
-            <div class="task-header">
-                <div class="task-title-section">`;
-        
-        if (hasChildren) {
-            html += `
-                    <button class="collapse-btn" 
-                            onclick="toggleSubtaskCollapse('${task.id}')" 
-                            style="background: none; border: none; cursor: pointer; padding: 0.25rem; margin-right: 0.25rem; color: var(--primary-color);"
-                            title="${isCollapsed ? 'Expand' : 'Collapse'} subtasks"
-                            aria-label="${isCollapsed ? 'Expand' : 'Collapse'} subtasks">
-                        <i class="fas fa-chevron-${isCollapsed ? 'right' : 'down'}"></i>
-                    </button>`;
-        } else {
-            html += `<span style="width: 24px; display: inline-block;"></span>`;
-        }
-        
-        html += `
-                    <input type="checkbox" 
-                           class="task-checkbox-multi" 
-                           value="${task.id}"
-                           ${selectedTasks.has(task.id) ? 'checked' : ''} 
-                           onchange="toggleTaskSelection('${task.id}', this.checked)">
-                           
-                    <input type="checkbox" 
-                           class="task-checkbox" 
-                           ${task.completed ? 'checked' : ''} 
-                           onchange="toggleTask('${task.id}')">
-                           
-                    <div>
-                        <div class="task-title" style="${subtaskTitleStyle}">`;
-        
-        if (displayLevel > 0) {
-            html += `<i class="fas fa-level-up-alt" style="transform: rotate(90deg); margin-right: 0.25rem; font-size: 0.8rem; opacity: 0.6;"></i>`;
-        }
-        
-        html += `${escapeHtml(task.title)}`;
-        
-        if (hasChildren) {
-            html += ` <span style="font-size: 0.8rem; opacity: 0.7;">(${task.children.length})</span>`;
-        }
-        
-        html += `
-                        </div>
-                    </div>
-                </div>
-                <div class="task-actions">`;
-        
-        if (displayLevel < 3) {
-            html += `
-                    <button class="task-btn" onclick="openSubtaskForm('${task.id}')" title="Add Subtask" aria-label="Add Subtask">
-                        <i class="fas fa-plus-circle"></i>
-                    </button>`;
-        }
-        
-        html += `
-                    <button class="task-btn" onclick="editTask('${task.id}')" title="Edit" aria-label="Edit Task">
-                        <i class="fas fa-edit"></i>
-                    </button>
-                    <button class="task-btn" onclick="deleteTask('${task.id}')" title="Delete" aria-label="Delete Task">
-                        <i class="fas fa-trash"></i>
-                    </button>
-                </div>
-            </div>`;
-        
-        if (task.description) {
-            html += `<div class="task-description">${escapeHtml(task.description)}</div>`;
-        }
-        
-        html += `
-            <div class="task-meta">
-                <span class="task-badge badge-category">
-                    <i class="fas fa-folder"></i> ${capitalize(task.category)}
-                </span>
-                <span class="task-badge badge-priority ${task.priority}">
-                    <i class="fas fa-flag"></i> ${capitalize(task.priority)}
-                </span>`;
-        
-        if (task.dueDate) {
-            html += `
-                <span class="task-badge badge-date">
-                    <i class="fas fa-calendar"></i> ${formatDate(task.dueDate)}
-                </span>`;
-        }
-        
-        if (task.repeat) {
-            html += `
-                <span class="task-badge badge-repeat">
-                    <i class="fas fa-redo"></i> ${capitalize(task.repeatFrequency)}
-                </span>`;
-        }
-        
-        html += `
-            </div>`;
-        
-        if (task.tags.length > 0) {
-            html += `
-            <div class="task-tags">
-                ${task.tags.map(tag => `<span class="tag">#${escapeHtml(tag)}</span>`).join('')}
-            </div>`;
-        }
-        
-        html += `
-        </div>`;
-        
-        // Render children tasks recursively (collapsible)
-        if (hasChildren && !isCollapsed) {
-            html += `
-        <div class="subtask-container" data-parent-id="${task.id}">
-            ${task.children.map(child => renderTaskHTML(child, level + 1)).join('')}
-        </div>`;
-        }
-        
-        return html;
-    };
-    
-        container.innerHTML = taskTree.map(task => renderTaskHTML(task, 0)).join('');
-
-    updateBulkActionUI();
-    updateFilterCounts(); // *** NEW: Update filter counts
+    // Simple fallback - show a message about the new structure
+    container.innerHTML = `
+        <div style="text-align: center; padding: 2rem; color: var(--text-secondary);">
+            <i class="fas fa-exclamation-triangle" style="font-size: 2rem; margin-bottom: 1rem; display: block;"></i>
+            <h3>Table Structure Not Found</h3>
+            <p>Please refresh the page to load the new tabular layout.</p>
+        </div>
+    `;
 }
 
+// *** NEW: Add Subtask Function ***
+function addSubtask(parentId) {
+    const parentTask = tasks.find(t => t.id === parentId);
+    if (!parentTask) return;
     
-// *** NEW: Toggle Subtask Collapse ***
-function toggleSubtaskCollapse(taskId) {
+    // Set the parent ID in the hidden field
+    document.getElementById('taskParentId').value = parentId;
+    
+    // Update modal title
+    document.getElementById('modalTitle').textContent = `Add Subtask to: ${parentTask.title}`;
+    
+    // Clear form
+    document.getElementById('taskForm').reset();
+    document.getElementById('taskId').value = '';
+    
+    // Set default category and priority from parent
+    document.getElementById('taskCategory').value = parentTask.category;
+    document.getElementById('taskPriority').value = parentTask.priority;
+    
+    // Show modal
+    document.getElementById('taskModal').classList.remove('hidden');
+}
+
+// *** NEW: Toggle Task Completion ***
+function toggleTask(taskId) {
     const task = tasks.find(t => t.id === taskId);
     if (!task) return;
     
-    task.collapsed = !task.collapsed;
-    saveTasks(); // Save state
-    renderTasks(); // Re-render
+    const wasCompleted = task.completed;
+    task.completed = !task.completed;
+    
+    // Handle recurring tasks
+    if (task.completed && task.repeat) {
+        createNextRecurringTask(task);
+    }
+    
+    saveToHistory(task.completed ? 'Completed task: ' + task.title : 'Uncompleted task: ' + task.title);
+    scheduleAutoSave();
+    renderTasks();
+    renderAISummary();
+    
+    showToast(task.completed ? 'Task marked as completed' : 'Task marked as incomplete', 'success');
+}
+
+// *** NEW: Create Next Recurring Task ***
+function createNextRecurringTask(completedTask) {
+    const nextDueDate = calculateNextDueDate(completedTask.dueDate, completedTask.repeatFrequency);
+    
+    const newTask = {
+        id: Date.now().toString(),
+        title: completedTask.title,
+        description: completedTask.description,
+        category: completedTask.category,
+        priority: completedTask.priority,
+        dueDate: nextDueDate,
+        reminder: completedTask.reminder,
+        repeat: completedTask.repeat,
+        repeatFrequency: completedTask.repeatFrequency,
+        tags: [...completedTask.tags],
+        parentId: completedTask.parentId,
+        completed: false,
+        createdAt: new Date().toISOString(),
+        order: completedTask.order
+    };
+    
+    tasks.push(newTask);
+}
+
+// *** NEW: Calculate Next Due Date for Recurring Tasks ***
+function calculateNextDueDate(currentDueDate, frequency) {
+    const dueDate = new Date(currentDueDate);
+    const nextDate = new Date(dueDate);
+    
+    switch (frequency) {
+        case 'daily':
+            nextDate.setDate(nextDate.getDate() + 1);
+            break;
+        case 'weekly':
+            nextDate.setDate(nextDate.getDate() + 7);
+            break;
+        case 'monthly':
+            nextDate.setMonth(nextDate.getMonth() + 1);
+            break;
+        case 'yearly':
+            nextDate.setFullYear(nextDate.getFullYear() + 1);
+            break;
+    }
+    
+    return nextDate.toISOString();
+}
+// *** NEW: Render individual task as table row ***
+function renderTaskTableRow(task) {
+    const isSelected = selectedTasks.has(task.id);
+    const priorityClass = `priority-${task.priority}`;
+    const categoryClass = `category-${task.category}`;
+    const dueDateClass = getDueDateClass(task.dueDate);
+    const dueDateFormatted = task.dueDate ? formatDate(task.dueDate) : 'No due date';
+    const indentLevel = task.level || 0;
+    const indentStyle = indentLevel > 0 ? `padding-left: ${indentLevel * 2}rem;` : '';
+    const isSubtask = indentLevel > 0;
+    
+    return `
+        <tr class="task-row ${task.completed ? 'completed' : ''} ${isSelected ? 'selected' : ''} ${isSubtask ? 'subtask-row' : ''}" data-task-id="${task.id}">
+            <td>
+                <input type="checkbox" 
+                       class="task-checkbox-multi" 
+                       value="${task.id}"
+                       ${isSelected ? 'checked' : ''} 
+                       onchange="toggleTaskSelection('${task.id}', this.checked)">
+            </td>
+            <td style="${indentStyle}">
+                <div class="task-content-wrapper">
+                    <div class="task-title-section">
+                        ${isSubtask ? '<i class="fas fa-level-up-alt subtask-icon"></i>' : ''}
+                        <input type="checkbox" 
+                               class="task-complete-checkbox" 
+                               ${task.completed ? 'checked' : ''} 
+                               onchange="toggleTask('${task.id}')"
+                               title="Mark as completed">
+                        <div class="task-title ${task.completed ? 'completed-text' : ''}">${escapeHtml(task.title)}</div>
+                    </div>
+                    ${task.description ? `<div class="task-description">${escapeHtml(task.description)}</div>` : ''}
+                    ${task.tags && task.tags.length > 0 ? `
+                        <div class="task-tags">
+                            ${task.tags.map(tag => `<span class="task-tag">${escapeHtml(tag)}</span>`).join('')}
+                        </div>
+                    ` : ''}
+                    ${task.repeat ? `
+                        <div class="task-recurring-indicator">
+                            <i class="fas fa-redo"></i> Recurring (${capitalize(task.repeatFrequency)})
+                        </div>
+                    ` : ''}
+                </div>
+            </td>
+            <td>
+                <span class="category-badge ${categoryClass}">${capitalize(task.category)}</span>
+            </td>
+            <td>
+                <span class="priority-badge ${priorityClass}">${capitalize(task.priority)}</span>
+            </td>
+            <td>
+                <div class="due-date-cell ${dueDateClass}">${dueDateFormatted}</div>
+            </td>
+            <td>
+                <div class="task-actions">
+                    ${!isSubtask ? `
+                        <button class="task-action-btn" onclick="addSubtask('${task.id}')" title="Add Subtask">
+                            <i class="fas fa-plus-circle"></i>
+                        </button>
+                    ` : ''}
+                    <button class="task-action-btn" onclick="editTask('${task.id}')" title="Edit">
+                        <i class="fas fa-edit"></i>
+                    </button>
+                    <button class="task-action-btn" onclick="deleteTask('${task.id}')" title="Delete">
+                        <i class="fas fa-trash"></i>
+                    </button>
+                </div>
+            </td>
+        </tr>
+    `;
+}
+
+// *** NEW: Render pagination controls ***
+function renderPaginationControls() {
+    const paginationInfo = document.getElementById('paginationInfo');
+    const pageNumbers = document.getElementById('pageNumbers');
+    const prevBtn = document.getElementById('prevPageBtn');
+    const nextBtn = document.getElementById('nextPageBtn');
+    
+    // Update pagination info
+    const startItem = totalTasks === 0 ? 0 : (currentPage - 1) * pageSize + 1;
+    const endItem = Math.min(currentPage * pageSize, totalTasks);
+    paginationInfo.textContent = `Showing ${startItem}-${endItem} of ${totalTasks} tasks`;
+    
+    // Update page buttons
+    prevBtn.disabled = currentPage === 1;
+    nextBtn.disabled = currentPage === totalPages || totalPages === 0;
+    
+    // Generate page numbers
+    let pages = [];
+    const maxVisiblePages = 5;
+    
+    if (totalPages <= maxVisiblePages) {
+        // Show all pages if total is small
+        for (let i = 1; i <= totalPages; i++) {
+            pages.push(i);
+        }
+    } else {
+        // Show smart pagination
+        if (currentPage <= 3) {
+            pages = [1, 2, 3, 4, '...', totalPages];
+        } else if (currentPage >= totalPages - 2) {
+            pages = [1, '...', totalPages - 3, totalPages - 2, totalPages - 1, totalPages];
+        } else {
+            pages = [1, '...', currentPage - 1, currentPage, currentPage + 1, '...', totalPages];
+        }
+    }
+    
+    pageNumbers.innerHTML = pages.map(page => {
+        if (page === '...') {
+            return '<span class="page-number disabled">...</span>';
+        }
+        return `<button class="page-number ${page === currentPage ? 'active' : ''}" onclick="goToPage(${page})">${page}</button>`;
+    }).join('');
+}
+
+// *** NEW: Pagination navigation functions ***
+function goToPage(page) {
+    if (page >= 1 && page <= totalPages) {
+        currentPage = page;
+        renderTasks();
+    }
+}
+
+function goToPreviousPage() {
+    if (currentPage > 1) {
+        currentPage--;
+        renderTasks();
+    }
+}
+
+function goToNextPage() {
+    if (currentPage < totalPages) {
+        currentPage++;
+        renderTasks();
+    }
+}
+
+function changePageSize() {
+    const pageSizeSelect = document.getElementById('pageSizeSelect');
+    if (!pageSizeSelect) return;
+    
+    pageSize = parseInt(pageSizeSelect.value);
+    currentPage = 1; // Reset to first page when changing page size
+    renderTasks();
+}
+
+function changePageSizeTop() {
+    const pageSizeSelectTop = document.getElementById('pageSizeSelectTop');
+    if (!pageSizeSelectTop) return;
+    
+    pageSize = parseInt(pageSizeSelectTop.value);
+    currentPage = 1; // Reset to first page when changing page size
+    
+    // Sync both selectors
+    const pageSizeSelect = document.getElementById('pageSizeSelect');
+    if (pageSizeSelect) {
+        pageSizeSelect.value = pageSize;
+    }
+    
+    renderTasks();
+}
+
+// *** NEW: Undo/Redo Functions ***
+function saveToHistory(action) {
+    // Remove any states after current index
+    history = history.slice(0, historyIndex + 1);
+    
+    // Add new state to history
+    history.push({
+        tasks: JSON.parse(JSON.stringify(tasks)),
+        action: action,
+        timestamp: new Date().toISOString()
+    });
+    
+    // Limit history size
+    if (history.length > maxHistorySize) {
+        history.shift();
+    } else {
+        historyIndex++;
+    }
+    
+    updateUndoRedoButtons();
+}
+
+function undo() {
+    if (historyIndex > 0) {
+        historyIndex--;
+        tasks = JSON.parse(JSON.stringify(history[historyIndex].tasks));
+        renderTasks();
+        renderAISummary();
+        updateFilterCounts();
+        updateUndoRedoButtons();
+        scheduleAutoSave();
+        showToast('Undo: ' + history[historyIndex + 1].action, 'info');
+    }
+}
+
+function redo() {
+    if (historyIndex < history.length - 1) {
+        historyIndex++;
+        tasks = JSON.parse(JSON.stringify(history[historyIndex].tasks));
+        renderTasks();
+        renderAISummary();
+        updateFilterCounts();
+        updateUndoRedoButtons();
+        scheduleAutoSave();
+        showToast('Redo: ' + history[historyIndex].action, 'info');
+    }
+}
+
+function updateUndoRedoButtons() {
+    const undoBtn = document.getElementById('undoBtn');
+    const redoBtn = document.getElementById('redoBtn');
+    
+    if (undoBtn) {
+        undoBtn.disabled = historyIndex <= 0;
+    }
+    
+    if (redoBtn) {
+        redoBtn.disabled = historyIndex >= history.length - 1;
+    }
+}
+
+// *** NEW: Auto-save Functions ***
+function scheduleAutoSave() {
+    hasUnsavedChanges = true;
+    
+    // Clear existing timer
+    if (autoSaveTimer) {
+        clearTimeout(autoSaveTimer);
+    }
+    
+    // Schedule new auto-save
+    autoSaveTimer = setTimeout(() => {
+        autoSave();
+    }, autoSaveDelay);
+}
+
+async function autoSave() {
+    if (!hasUnsavedChanges) return;
+    
+    try {
+        await saveTasks();
+        hasUnsavedChanges = false;
+        showAutoSaveIndicator();
+        console.log('Auto-saved at', new Date().toLocaleTimeString());
+    } catch (error) {
+        console.error('Auto-save failed:', error);
+        showToast('Auto-save failed', 'error');
+    }
+}
+
+function showAutoSaveIndicator() {
+    const indicator = document.getElementById('autoSaveIndicator');
+    if (indicator) {
+        indicator.classList.add('show');
+        setTimeout(() => {
+            indicator.classList.remove('show');
+        }, 2000);
+    }
+}
+
+// *** NEW: Enhanced saveTasks with history tracking ***
+async function saveTasks() {
+    try {
+        // Use a transaction to clear and re-populate
+        const tx = db.transaction(TASK_STORE, 'readwrite');
+        const store = tx.objectStore(TASK_STORE);
+        await store.clear();
+        
+        // Add all tasks
+        for (const task of tasks) {
+            await store.add(task);
+        }
+        
+        console.log('Tasks saved successfully');
+    } catch (error) {
+        console.error("Error saving tasks:", error);
+        throw error;
+    }
+}
+
+// *** NEW: Quick Export Menu Functions ***
+function showQuickExportMenu() {
+    const menu = document.getElementById('quickExportMenu');
+    if (menu) {
+        menu.style.display = 'block';
+        
+        // Position the menu relative to the export button
+        const exportBtn = event.target.closest('.icon-btn');
+        const rect = exportBtn.getBoundingClientRect();
+        menu.style.top = (rect.bottom + window.scrollY + 8) + 'px';
+        menu.style.right = (window.innerWidth - rect.right) + 'px';
+        
+        // Close menu when clicking outside
+        setTimeout(() => {
+            document.addEventListener('click', hideQuickExportMenuOnClickOutside);
+        }, 100);
+    }
+}
+
+function hideQuickExportMenu() {
+    const menu = document.getElementById('quickExportMenu');
+    if (menu) {
+        menu.style.display = 'none';
+        document.removeEventListener('click', hideQuickExportMenuOnClickOutside);
+    }
+}
+
+function hideQuickExportMenuOnClickOutside(event) {
+    const menu = document.getElementById('quickExportMenu');
+    const exportBtn = event.target.closest('.icon-btn[onclick*="showQuickExportMenu"]');
+    
+    if (menu && !menu.contains(event.target) && !exportBtn) {
+        hideQuickExportMenu();
+    }
+}
+
+// *** NEW: Smart Import System ***
+let importData = [];
+let importAnalysis = {
+    total: 0,
+    new: 0,
+    duplicates: 0,
+    updated: 0,
+    fileType: '',
+    tasks: []
+};
+
+// *** NEW: Duplicate Detection Algorithm ***
+function detectDuplicate(importTask, existingTasks) {
+    const matchTitle = document.getElementById('matchTitle').checked;
+    const matchCategory = document.getElementById('matchCategory').checked;
+    const matchPriority = document.getElementById('matchPriority').checked;
+    const matchDueDate = document.getElementById('matchDueDate').checked;
+    
+    return existingTasks.find(existingTask => {
+        let matches = 0;
+        let totalChecks = 0;
+        
+        if (matchTitle) {
+            totalChecks++;
+            if (importTask.title.toLowerCase().trim() === existingTask.title.toLowerCase().trim()) {
+                matches++;
+            }
+        }
+        
+        if (matchCategory) {
+            totalChecks++;
+            if (importTask.category === existingTask.category) {
+                matches++;
+            }
+        }
+        
+        if (matchPriority) {
+            totalChecks++;
+            if (importTask.priority === existingTask.priority) {
+                matches++;
+            }
+        }
+        
+        if (matchDueDate) {
+            totalChecks++;
+            if (importTask.dueDate === existingTask.dueDate) {
+                matches++;
+            }
+        }
+        
+        // Consider it a duplicate if at least 50% of checked fields match
+        return totalChecks > 0 && (matches / totalChecks) >= 0.5;
+    });
+}
+
+// *** NEW: Analyze Import Data ***
+function analyzeImportData(data, fileType) {
+    importAnalysis = {
+        total: data.length,
+        new: 0,
+        duplicates: 0,
+        updated: 0,
+        fileType: fileType,
+        tasks: []
+    };
+    
+    data.forEach(importTask => {
+        const duplicate = detectDuplicate(importTask, tasks);
+        
+        const analysis = {
+            task: importTask,
+            status: duplicate ? 'duplicate' : 'new',
+            duplicate: duplicate,
+            changes: []
+        };
+        
+        if (duplicate) {
+            importAnalysis.duplicates++;
+            
+            // Check for differences for update option
+            const changes = [];
+            if (importTask.description !== duplicate.description) {
+                changes.push('description');
+            }
+            if (importTask.priority !== duplicate.priority) {
+                changes.push('priority');
+            }
+            if (importTask.dueDate !== duplicate.dueDate) {
+                changes.push('due date');
+            }
+            
+            analysis.changes = changes;
+            if (changes.length > 0) {
+                analysis.status = 'updated';
+                importAnalysis.updated++;
+            }
+        } else {
+            importAnalysis.new++;
+        }
+        
+        importAnalysis.tasks.push(analysis);
+    });
+    
+    return importAnalysis;
+}
+
+// *** NEW: Update Import Preview UI ***
+function updateImportPreview() {
+    // Update stats
+    document.getElementById('fileType').textContent = importAnalysis.fileType.toUpperCase();
+    document.getElementById('totalTasks').textContent = importAnalysis.total;
+    document.getElementById('newTasksCount').textContent = importAnalysis.new;
+    document.getElementById('duplicateTasksCount').textContent = importAnalysis.duplicates;
+    
+    // Update option counts
+    document.getElementById('newCount').textContent = importAnalysis.new;
+    document.getElementById('updateCount').textContent = importAnalysis.updated;
+    document.getElementById('newUpdateCount').textContent = importAnalysis.new;
+    
+    // Render preview table
+    renderPreviewTable();
+}
+
+// *** NEW: Render Preview Table ***
+function renderPreviewTable() {
+    const tbody = document.getElementById('previewTableBody');
+    const showDuplicatesOnly = document.getElementById('showDuplicatesOnly').checked;
+    const showNewOnly = document.getElementById('showNewOnly').checked;
+    
+    let filteredTasks = importAnalysis.tasks;
+    
+    if (showDuplicatesOnly) {
+        filteredTasks = filteredTasks.filter(t => t.status === 'duplicate' || t.status === 'updated');
+    } else if (showNewOnly) {
+        filteredTasks = filteredTasks.filter(t => t.status === 'new');
+    }
+    
+    tbody.innerHTML = filteredTasks.map(analysis => {
+        const task = analysis.task;
+        const statusClass = analysis.status === 'new' ? 'new' : 
+                           analysis.status === 'updated' ? 'updated' : 'duplicate';
+        
+        return `
+            <tr>
+                <td>
+                    <span class="status-badge ${statusClass}">${analysis.status}</span>
+                </td>
+                <td>${escapeHtml(task.title)}</td>
+                <td>
+                    <span class="category-badge category-${task.category}">${capitalize(task.category)}</span>
+                </td>
+                <td>
+                    <span class="priority-badge priority-${task.priority}">${capitalize(task.priority)}</span>
+                </td>
+                <td>${task.dueDate ? formatDate(task.dueDate) : 'No due date'}</td>
+            </tr>
+        `;
+    }).join('');
+}
+
+// *** NEW: Filter Preview ***
+function filterPreview() {
+    renderPreviewTable();
+}
+
+// *** NEW: Enhanced Import Handlers ***
+function handleImportMerge() {
+    const newTasks = importAnalysis.tasks
+        .filter(analysis => analysis.status === 'new')
+        .map(analysis => ({
+            ...analysis.task,
+            id: Date.now().toString() + Math.random(),
+            createdAt: new Date().toISOString()
+        }));
+    
+    tasks.push(...newTasks);
+    saveToHistory(`Incremental import: ${newTasks.length} tasks added`);
+    saveTasks();
+    renderTasks();
+    renderAISummary();
+    
+    showToast(`${newTasks.length} new tasks imported successfully`, 'success');
+    closeImportModal();
+}
+
+function handleImportUpdate() {
+    const newTasks = [];
+    const updatedTasks = [];
+    
+    importAnalysis.tasks.forEach(analysis => {
+        if (analysis.status === 'new') {
+            newTasks.push({
+                ...analysis.task,
+                id: Date.now().toString() + Math.random(),
+                createdAt: new Date().toISOString()
+            });
+        } else if (analysis.status === 'updated' && analysis.duplicate) {
+            // Update existing task
+            const existingTask = tasks.find(t => t.id === analysis.duplicate.id);
+            if (existingTask) {
+                if (analysis.changes.includes('description')) {
+                    existingTask.description = analysis.task.description;
+                }
+                if (analysis.changes.includes('priority')) {
+                    existingTask.priority = analysis.task.priority;
+                }
+                if (analysis.changes.includes('due date')) {
+                    existingTask.dueDate = analysis.task.dueDate;
+                }
+                updatedTasks.push(existingTask);
+            }
+        }
+    });
+    
+    tasks.push(...newTasks);
+    saveToHistory(`Update import: ${newTasks.length} added, ${updatedTasks.length} updated`);
+    saveTasks();
+    renderTasks();
+    renderAISummary();
+    
+    showToast(`${newTasks.length} new tasks added, ${updatedTasks.length} tasks updated`, 'success');
+    closeImportModal();
+}
+
+function handleImportOverwrite() {
+    if (!confirm('This will delete all existing tasks and replace them with the imported tasks. This action cannot be undone. Continue?')) {
+        return;
+    }
+    
+    const newTasks = importAnalysis.tasks.map(analysis => ({
+        ...analysis.task,
+        id: Date.now().toString() + Math.random(),
+        createdAt: new Date().toISOString()
+    }));
+    
+    tasks = newTasks;
+    saveToHistory(`Overwrite import: ${newTasks.length} tasks replaced all existing tasks`);
+    saveTasks();
+    renderTasks();
+    renderAISummary();
+    
+    showToast(`${newTasks.length} tasks imported (all previous tasks replaced)`, 'success');
+    closeImportModal();
+}
+
+function handleImportCancel() {
+    closeImportModal();
+}
+
+function closeImportModal() {
+    document.getElementById('importOptionsModal').classList.add('hidden');
+    importData = [];
+    importAnalysis = { total: 0, new: 0, duplicates: 0, updated: 0, fileType: '', tasks: [] };
+}
+
+// *** NEW: Enhanced Import File Function ***
+async function importFile(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+    
+    const fileName = file.name.toLowerCase();
+    let fileType = '';
+    let data = [];
+    
+    try {
+        if (fileName.endsWith('.json')) {
+            fileType = 'json';
+            const text = await file.text();
+            const parsedData = JSON.parse(text);
+            
+            // Handle both formats: direct array or object with tasks property
+            if (Array.isArray(parsedData)) {
+                data = parsedData;
+            } else if (parsedData && parsedData.tasks && Array.isArray(parsedData.tasks)) {
+                data = parsedData.tasks;
+            } else {
+                throw new Error('Invalid JSON format. Expected an array of tasks or an object with a "tasks" array.');
+            }
+        } else if (fileName.endsWith('.xlsx')) {
+            fileType = 'excel';
+            data = await parseExcel(file);
+        } else {
+            showToast('Unsupported file format. Please use JSON or Excel files.', 'error');
+            return;
+        }
+        
+        // Validate data structure
+        if (!Array.isArray(data) || data.length === 0) {
+            showToast('Invalid file format or no tasks found', 'error');
+            return;
+        }
+        
+        // Normalize task data
+        data = data.map(item => normalizeTaskData(item));
+        
+        // Analyze import data
+        analyzeImportData(data, fileType);
+        
+        // Update preview UI
+        updateImportPreview();
+        
+        // Show import modal
+        document.getElementById('importOptionsModal').classList.remove('hidden');
+        
+    } catch (error) {
+        console.error('Import error:', error);
+        showToast('Error importing file: ' + error.message, 'error');
+    }
+    
+    // Reset file input
+    event.target.value = '';
+}
+
+// *** NEW: Normalize Task Data ***
+function normalizeTaskData(item) {
+    return {
+        id: item.id || '',
+        title: item.title || item.Title || item.task || item.Task || '',
+        description: item.description || item.Description || item.notes || item.Notes || '',
+        category: item.category || item.Category || 'personal',
+        priority: item.priority || item.Priority || 'medium',
+        dueDate: item.dueDate || item.due_date || item.DueDate || item.Due || null,
+        reminder: item.reminder || item.Reminder || null,
+        repeat: item.repeat || item.Repeat || false,
+        repeatFrequency: item.repeatFrequency || item.repeat_frequency || item.Frequency || null,
+        tags: Array.isArray(item.tags) ? item.tags : 
+               (item.tags || item.Tags || item.tag || item.Tag ? 
+                (item.tags || item.Tags || item.tag || item.Tag).toString().split(',').map(t => t.trim()).filter(t => t) : []),
+        completed: item.completed || item.Completed || false,
+        parentId: item.parentId || item.parent_id || null,
+        createdAt: item.createdAt || item.created_at || item.Created || new Date().toISOString(),
+        order: item.order || item.Order || Date.now()
+    };
+}
+
+// *** NEW: Get due date class for styling ***
+function getDueDateClass(dueDate) {
+    if (!dueDate) return '';
+    
+    const now = new Date();
+    const due = new Date(dueDate);
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const dueDay = new Date(due.getFullYear(), due.getMonth(), due.getDate());
+    
+    if (dueDay < today) {
+        return 'due-date-overdue';
+    } else if (dueDay.getTime() === today.getTime()) {
+        return 'due-date-today';
+    } else if (dueDay <= new Date(today.getTime() + 7 * 24 * 60 * 60 * 1000)) {
+        return 'due-date-soon';
+    }
+    return '';
 }
 
 // *** NEW: Quick Export Menu Functions ***
@@ -1837,26 +2513,12 @@ function exportToJSON() {
     showToast(`Tasks exported to ${filename}`, 'success');
 }
 
-function exportToCSV() {
-    const timestamp = new Date().toISOString();
-    let csv = `# Exported at: ${timestamp}\n`;
-    // *** UPDATED: Added new fields
-    csv += 'ID,Title,Description,Category,Priority,Due Date,Reminder,Repeat,Repeat Frequency,Tags,Completed,Created At,Completed At,Previous Instance ID,Order,Parent ID\n';
-    
-    tasks.forEach(task => {
-        csv += `${escapeCSV(task.id)},${escapeCSV(task.title)},${escapeCSV(task.description)},${escapeCSV(task.category)},${escapeCSV(task.priority)},${escapeCSV(task.dueDate)},${escapeCSV(task.reminder)},${escapeCSV(task.repeat)},${escapeCSV(task.repeatFrequency)},${escapeCSV(task.tags.join(';'))},${escapeCSV(task.completed)},${escapeCSV(task.createdAt)},${escapeCSV(task.completedAt)},${escapeCSV(task.previousInstanceId)},${escapeCSV(task.order)},${escapeCSV(task.parentId)}\n`;
-    });
-    
-    const filename = getTimestampedFilename('tasks', 'csv');
-    downloadFile(csv, filename, 'text/csv');
-    showToast(`Tasks exported to ${filename}`, 'success');
-}
-
 function exportToExcel() {
     if (typeof XLSX === 'undefined') {
         showToast('Excel export library not loaded. Please check your connection.', 'error');
         return;
     }
+    
 
     const timestamp = new Date().toISOString();
     
@@ -1986,287 +2648,47 @@ function isDuplicate(newTask, existingTask) {
     // ... (function is unchanged) ...
 }
 
-// *** UPDATED: importFile function ***
-function importFile(event) {
-    const file = event.target.files[0];
-    if (!file) return;
-    
-    const reader = new FileReader();
-    
-    reader.onload = function(e) {
-        try {
-            const content = e.target.result;
-            let importedData = null;
-            let importedTasks = [];
-            
-            if (file.name.endsWith('.json')) {
-                importedData = JSON.parse(content);
-                if (importedData.tasks && Array.isArray(importedData.tasks)) {
-                    importedTasks = importedData.tasks;
-                } else if (Array.isArray(importedData)) {
-                    importedTasks = importedData;
-                } else {
-                    throw new Error('Invalid JSON format');
-                }
-            } else if (file.name.endsWith('.csv')) {
-                importedTasks = parseCSV(content);
-            } else if (file.name.endsWith('.xlsx')) {
-                if (typeof XLSX === 'undefined') {
-                    showToast('Excel library not loaded. Please check your connection.', 'error');
+// *** NEW: Functions for Import Options Modal ***
+
+// *** NEW: Excel parsing function for smart import ***
+async function parseExcel(file) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = function(e) {
+            try {
+                const data = new Uint8Array(e.target.result);
+                const workbook = XLSX.read(data, {type: 'array'});
+                const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+                const jsonData = XLSX.utils.sheet_to_json(firstSheet, {header: 1});
+                
+                if (jsonData.length < 2) {
+                    resolve([]);
                     return;
                 }
-                const workbook = XLSX.read(content, { type: 'binary' });
-                let sheetName = 'Tasks';
-                if (!workbook.Sheets[sheetName]) sheetName = workbook.SheetNames[0];
                 
-                const sheet = workbook.Sheets[sheetName];
-                const rawData = XLSX.utils.sheet_to_json(sheet, {raw: false});
+                const headers = jsonData[0];
+                const tasks = [];
                 
-                // *** UPDATED: Read new fields ***
-                importedTasks = rawData.map(row => ({
-                    id: row.ID ? String(row.ID) : (Date.now().toString() + Math.random().toString(36).substr(2, 9)),
-                    title: row.Title || '',
-                    description: row.Description || '',
-                    category: row.Category || 'personal',
-                    priority: row.Priority || 'medium',
-                    dueDate: row['Due Date'] ? new Date(row['Due Date']).toISOString().slice(0, 16) : null,
-                    reminder: row.Reminder ? new Date(row.Reminder).toISOString().slice(0, 16) : null,
-                    repeat: String(row.Repeat).toLowerCase() === 'yes' || row.Repeat === true,
-                    repeatFrequency: row['Repeat Frequency'] || null,
-                    tags: row.Tags ? String(row.Tags).split(',').map(t => t.trim()).filter(t => t) : [],
-                    completed: String(row.Completed).toLowerCase() === 'yes' || row.Completed === true,
-                    createdAt: row['Created At'] ? new Date(row['Created At']).toISOString() : new Date().toISOString(),
-                    completedAt: row['Completed At'] ? new Date(row['Completed At']).toISOString() : null,
-                    previousInstanceId: row['Previous Instance ID'] || null,
-                    order: row['Order'] || null, // Will be populated later if null
-                    parentId: row['Parent ID'] || null
-                }));
-            } else {
-                throw new Error('Unsupported file format. Please use JSON, CSV, or XLSX files.');
-            }
-            
-            // Filter out tasks without titles
-            const validTasks = importedTasks.filter(task => task.title && String(task.title).trim() !== '');
-            const skippedCount = importedTasks.length - validTasks.length;
-
-            if (validTasks.length === 0) {
-                showToast(skippedCount > 0 ? `No valid tasks found. ${skippedCount} invalid task(s) skipped.` : 'No tasks found in file', 'info');
-                return;
-            }
-            
-            // Show import options
-            showImportOptionsModal(validTasks, skippedCount);
-            
-        } catch (error) {
-            console.error('Import error:', error);
-            showToast(`Error importing file: ${error.message}`, 'error');
-        }
-    };
-    
-    if (file.name.endsWith('.xlsx')) {
-        reader.readAsBinaryString(file);
-    } else {
-        reader.readAsText(file);
-    }
-    
-    event.target.value = ''; // Reset file input
-}
-
-// *** NEW: Functions for Import Options Modal ***
-function showImportOptionsModal(importedTasks, skippedCount) {
-    pendingImportData = importedTasks; // Store data
-    
-    let duplicateCount = 0;
-    let newCount = 0;
-
-    importedTasks.forEach(importedTask => {
-        let isDup = tasks.some(existingTask => isDuplicate(importedTask, existingTask));
-        if (isDup) {
-            duplicateCount++;
-        } else {
-            newCount++;
-        }
-    });
-
-    const totalCount = importedTasks.length;
-
-    // Update modal text
-    document.getElementById('importOptionsMessage').innerHTML = `
-        Your file contains <strong>${totalCount} task(s)</strong>.
-        ${skippedCount > 0 ? ` (<strong>${skippedCount}</strong> invalid tasks were skipped).` : ''}
-        How would you like to import them?
-    `;
-    
-    document.getElementById('mergeInfo').innerHTML = `
-        <strong>${newCount}</strong> new, <strong>${duplicateCount}</strong> duplicates found.
-    `;
-
-    // Show modal
-    // *** NEW: a11y focus management ***
-    lastFocusedElement = document.activeElement;
-    document.getElementById('importOptionsModal').classList.remove('hidden');
-    setTimeout(() => document.getElementById('importOptionsModal').querySelector('.merge-btn').focus(), 100);
-}
-
-// *** UPDATED: Import handlers (async for saveTasks) ***
-async function handleImportMerge() {
-    if (!pendingImportData) return;
-    
-    let newCount = 0;
-    let duplicateCount = 0;
-
-    pendingImportData.forEach(importedTask => {
-        let isDup = tasks.some(existingTask => isDuplicate(importedTask, existingTask));
-        
-        if (isDup) {
-            duplicateCount++;
-        } else {
-            // Ensure unique ID and defaults
-            if (!importedTask.id || tasks.some(t => t.id === importedTask.id)) {
-                importedTask.id = Date.now().toString() + Math.random().toString(36).substr(2, 9);
-            }
-            importedTask.order = importedTask.order || new Date(importedTask.createdAt).getTime();
-            importedTask.parentId = importedTask.parentId || null;
-            tasks.push(importedTask);
-            newCount++;
-        }
-    });
-
-    let message = '';
-    if (newCount > 0) message += `✓ ${newCount} new task(s) merged. `;
-    if (duplicateCount > 0) message += `⊗ ${duplicateCount} duplicate(s) skipped. `;
-    
-    if (newCount > 0) {
-        await saveTasks(); // *** UPDATED
-        renderTasks();
-        renderAISummary();
-        showToast(message.trim(), 'success');
-    } else {
-        showToast(message || 'No new tasks to merge', 'info');
-    }
-    
-    handleImportCancel(); // Close modal and clear data
-}
-
-function handleImportOverwrite() {
-    if (!pendingImportData) return;
-
-    // Show a final confirmation for destructive action
-    showConfirmModal(
-        'Confirm Overwrite',
-        `Are you sure? This will delete all your current ${tasks.length} tasks and replace them with ${pendingImportData.length} tasks from the file.`,
-        async () => { // *** UPDATED: async
-            tasks = pendingImportData.map(importedTask => {
-                // Ensure unique ID and defaults
-                if (!importedTask.id) {
-                     importedTask.id = Date.now().toString() + Math.random().toString(36).substr(2, 9);
+                for (let i = 1; i < jsonData.length; i++) {
+                    const task = {};
+                    headers.forEach((header, index) => {
+                        task[header] = jsonData[i][index] || '';
+                    });
+                    tasks.push(task);
                 }
-                return {
-                    ...importedTask,
-                    order: importedTask.order || new Date(importedTask.createdAt).getTime(),
-                    parentId: importedTask.parentId || null
-                };
-            });
-            
-            await saveTasks(); // *** UPDATED
-            renderTasks();
-            renderAISummary();
-            showToast(`✓ ${tasks.length} tasks imported. All previous tasks overwritten.`, 'success');
-            handleImportCancel(); // Close modal and clear data
-        }
-    );
-}
-
-function handleImportCancel() {
-    pendingImportData = null;
-    document.getElementById('importOptionsModal').classList.add('hidden');
-    // Clear the file input again in case user wants to select the same file
-    document.getElementById('importFile').value = '';
-    
-    // *** NEW: a11y focus management ***
-    if (lastFocusedElement) {
-        try { lastFocusedElement.focus(); } catch(e) {}
-    }
-}
-
-
-function parseCSV(content) {
-    const lines = content.split('\n').filter(line => line.trim() && !line.trim().startsWith('#'));
-    if (lines.length < 2) return [];
-    
-    // This CSV parser is simple and may fail with complex quoted strings.
-    const splitCsvLine = (line) => {
-        const result = [];
-        let current = '';
-        let inQuote = false;
-        for (let i = 0; i < line.length; i++) {
-            const char = line[i];
-            if (char === '"') {
-                if (inQuote && line[i+1] === '"') {
-                    current += '"';
-                    i++;
-                } else {
-                    inQuote = !inQuote;
-                }
-            } else if (char === ',' && !inQuote) {
-                result.push(current);
-                current = '';
-            } else {
-                current += char;
+                
+                resolve(tasks);
+            } catch (error) {
+                reject(error);
             }
-        }
-        result.push(current);
-        // Trim quotes from unquoted fields
-        return result.map(v => v.trim().replace(/^"(.*)"$/, '$1').replace(/""/g, '"'));
-    };
-    
-    const headers = splitCsvLine(lines[0]).map(h => h.trim().replace(/"/g, ''));
-    const tasks = [];
-    
-    const getHeaderIndex = (name) => headers.findIndex(h => h.toLowerCase() === name.toLowerCase());
-
-    // *** UPDATED: Read new fields ***
-    const indices = {
-        id: getHeaderIndex('ID'), title: getHeaderIndex('Title'), desc: getHeaderIndex('Description'),
-        cat: getHeaderIndex('Category'), prio: getHeaderIndex('Priority'), due: getHeaderIndex('Due Date'),
-        reminder: getHeaderIndex('Reminder'), repeat: getHeaderIndex('Repeat'), freq: getHeaderIndex('Repeat Frequency'),
-        tags: getHeaderIndex('Tags'), completed: getHeaderIndex('Completed'), created: getHeaderIndex('Created At'),
-        completedAt: getHeaderIndex('Completed At'), prevId: getHeaderIndex('Previous Instance ID'),
-        order: getHeaderIndex('Order'), parentId: getHeaderIndex('Parent ID')
-    };
-
-    for (let i = 1; i < lines.length; i++) {
-        if (!lines[i].trim()) continue;
-        
-        const values = splitCsvLine(lines[i]);
-        const task = {};
-
-        task.id = values[indices.id] || (Date.now().toString() + Math.random().toString(36).substr(2, 9));
-        task.title = values[indices.title] || '';
-        task.description = values[indices.desc] || '';
-        task.category = values[indices.cat] || 'personal';
-        task.priority = values[indices.prio] || 'medium';
-        task.dueDate = values[indices.due] || null;
-        task.reminder = values[indices.reminder] || null;
-        task.repeat = String(values[indices.repeat]).toLowerCase() === 'true' || String(values[indices.repeat]).toLowerCase() === 'yes';
-        task.repeatFrequency = values[indices.freq] || null;
-        task.tags = values[indices.tags] ? values[indices.tags].split(';').map(t => t.trim()).filter(t => t) : [];
-        task.completed = String(values[indices.completed]).toLowerCase() === 'true' || String(values[indices.completed]).toLowerCase() === 'yes';
-        task.createdAt = values[indices.created] || new Date().toISOString();
-        task.completedAt = values[indices.completedAt] || null;
-        task.previousInstanceId = values[indices.prevId] || null;
-        
-        // *** NEW DEFAULTS ***
-        task.order = values[indices.order] ? parseFloat(values[indices.order]) : new Date(task.createdAt).getTime();
-        task.parentId = values[indices.parentId] || null;
-        
-        if (task.title) {
-            tasks.push(task);
-        }
-    }
-    
-    return tasks;
+        };
+        reader.readAsArrayBuffer(file);
+    });
 }
+
+// *** NEW: Smart Import System Functions (already implemented above) ***
+
+// Utility Functions
 
 // *** UPDATED: STORAGE FUNCTIONS (IndexedDB) ***
 /**
